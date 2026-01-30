@@ -30,4 +30,4 @@
 - [x] Cross-env 10.1.0
 - [x] PostCSS 8.5.6 + plugins
 - [x] pnpm 10.28.2
-- [x] **Tailwind CSS 4.1.18** — Migrated to CSS-first config with `@tailwindcss/vite` plugin
+- [x] **Tailwind CSS 4.1.18** — Migrated to CSS-first config with `@tailwindcss/vite` plugin.

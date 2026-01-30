@@ -1,7 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@100;300;400;500;600;700;800;900&display=swap');
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@source "../../../**/*.{vue,ts}";
+@source "../../**/*.{vue,ts}";
+
 @layer utilities {
     /* Chrome, Safari and Opera */
     .no-scrollbar::-webkit-scrollbar {
@@ -97,15 +99,15 @@ body,
 }
 
 .status-indicator--success .circle-main {
-	@apply bg-black
+	@apply bg-black;
 }
 
 .status-indicator--success .circle-secondary {
-	@apply bg-black bg-opacity-10
+	@apply bg-black bg-opacity-10;
 }
 
 .status-indicator--success .circle-tertiary {
-	@apply bg-black bg-opacity-40
+	@apply bg-black bg-opacity-40;
 }
 
 @keyframes pulsate-tertiary {
@@ -156,7 +158,7 @@ body,
 }
 
 .btn {
-	@apply h-12 min-h-12 cursor-pointer rounded-xl font-medium px-4 inline-flex justify-center items-center gap-2 hover:bg-gray-500 hover:bg-opacity-10
+	@apply h-12 min-h-12 cursor-pointer rounded-xl font-medium px-4 inline-flex justify-center items-center gap-2 hover:bg-gray-500 hover:bg-opacity-10;
 }
 
 .checkbox {
@@ -214,9 +216,9 @@ body,
 	stroke-dasharray: var(--dash) calc(var(--circumference) - var(--dash));
 	transition: stroke-dasharray 0.3s linear 0s;
 
-	@apply stroke-black
+	@apply stroke-black;
 }
 
 .error circle.bg, .error circle.fg {
-    @apply !stroke-red-400
+    @apply !stroke-red-400;
 }

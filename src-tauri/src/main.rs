@@ -167,12 +167,16 @@ fn rs2js_channelmessage(message: &ChannelMessage, manager: &AppHandle) {
     }
 
     info!("rs2js_channelmessage: {message:?}");
-    manager.emit("rs2js_channelmessage", message).unwrap();
+    if let Err(e) = manager.emit("rs2js_channelmessage", message) {
+        warn!("Failed to emit rs2js_channelmessage: {e}");
+    }
 }
 
 fn rs2js_endpointinfo(message: &EndpointInfo, manager: &AppHandle) {
     info!("rs2js_endpointinfo: {message:?}");
-    manager.emit("rs2js_endpointinfo", message).unwrap();
+    if let Err(e) = manager.emit("rs2js_endpointinfo", message) {
+        warn!("Failed to emit rs2js_endpointinfo: {e}");
+    }
 }
 
 fn open_main_window(app_handle: &AppHandle) {

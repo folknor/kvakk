@@ -179,16 +179,10 @@ pub fn gen_random(size: usize) -> Vec<u8> {
 }
 
 pub fn get_download_dir() -> PathBuf {
-    let cdown = CUSTOM_DOWNLOAD.read();
-    match cdown {
-        Ok(mg) => {
-            if mg.is_some() {
-                return mg.as_ref().unwrap().clone();
-            }
-        }
-        Err(_) => {
-            // TODO
-        }
+    if let Ok(guard) = CUSTOM_DOWNLOAD.read()
+        && let Some(ref path) = *guard
+    {
+        return path.clone();
     }
 
     if let Some(user_dirs) = directories::UserDirs::new() {
@@ -215,6 +209,7 @@ pub fn is_not_self_ip(ip_address: &Ipv4Addr) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

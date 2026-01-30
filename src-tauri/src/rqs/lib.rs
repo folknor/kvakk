@@ -91,15 +91,13 @@ impl RQS {
         download_path: Option<PathBuf>,
         device_name: Option<String>,
     ) -> Self {
-        {
-            let mut guard = CUSTOM_DOWNLOAD.write().unwrap();
+        if let Ok(mut guard) = CUSTOM_DOWNLOAD.write() {
             *guard = download_path;
         }
+        if let Ok(mut guard) = DEVICE_NAME.write()
+            && let Some(device_name) = device_name
         {
-            let mut guard = DEVICE_NAME.write().unwrap();
-            if let Some(device_name) = device_name {
-                *guard = device_name.clone();
-            }
+            *guard = device_name.clone();
         }
 
         let (message_sender, _) = broadcast::channel(50);
@@ -222,10 +220,9 @@ impl RQS {
     }
 
     pub fn change_visibility(&mut self, nv: Visibility) {
-        self.visibility_sender
-            .lock()
-            .unwrap()
-            .send_modify(|state| *state = nv);
+        if let Ok(sender) = self.visibility_sender.lock() {
+            sender.send_modify(|state| *state = nv);
+        }
     }
 
     pub async fn stop(&mut self) {
@@ -251,8 +248,9 @@ impl RQS {
     // Setting None here will resume the default settings
     pub fn set_download_path(&self, p: Option<PathBuf>) {
         debug!("Setting the download path to {p:?}");
-        let mut guard = CUSTOM_DOWNLOAD.write().unwrap();
-        *guard = p;
+        if let Ok(mut guard) = CUSTOM_DOWNLOAD.write() {
+            *guard = p;
+        }
     }
 
     /// For this to properly take effect,
@@ -261,11 +259,15 @@ impl RQS {
     /// So only do this when no data transfer is going on.
     pub fn set_device_name(&self, name: String) {
         debug!("Setting the device name {name:?}");
-        let mut guard = DEVICE_NAME.write().unwrap();
-        *guard = name;
+        if let Ok(mut guard) = DEVICE_NAME.write() {
+            *guard = name;
+        }
     }
 
     pub fn get_device_name(&self) -> String {
-        DEVICE_NAME.read().unwrap().clone()
+        DEVICE_NAME
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "Unknown".to_string())
     }
 }

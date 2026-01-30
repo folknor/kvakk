@@ -327,8 +327,8 @@ impl InboundRequest {
         let (secret_key, public_key) = gen_ecdsa_keypair();
 
         let encoded_point = public_key.to_encoded_point(false);
-        let x = encoded_point.x().unwrap();
-        let y = encoded_point.y().unwrap();
+        let x = encoded_point.x().ok_or_else(|| anyhow!("Missing x coordinate"))?;
+        let y = encoded_point.y().ok_or_else(|| anyhow!("Missing y coordinate"))?;
 
         let pkey = GenericPublicKey {
             r#type: PublicKeyType::EcP256.into(),
@@ -381,7 +381,9 @@ impl InboundRequest {
         }
 
         let sha512 = Sha512::digest(frame_data);
-        if self.state.cipher_commitment.as_ref().unwrap().commitment() != &sha512[..] {
+        let cipher_commitment = self.state.cipher_commitment.as_ref()
+            .ok_or_else(|| anyhow!("Missing cipher_commitment"))?;
+        if cipher_commitment.commitment() != &sha512[..] {
             error!("cipher_commitment isn't equals to sha512(frame_data)");
             return Err(anyhow!("UKey2: cipher_commitment != sha512"));
         }
@@ -483,7 +485,9 @@ impl InboundRequest {
     async fn finish_text_transfer(&mut self, buffer: &mut [u8]) -> Result<(), anyhow::Error> {
         info!("Transfer finished");
 
-        match self.state.text_payload.clone().unwrap() {
+        let text_payload = self.state.text_payload.clone()
+            .ok_or_else(|| anyhow!("Missing text_payload"))?;
+        match text_payload {
             TextPayloadInfo::Url(_) => {
                 let payload = std::str::from_utf8(buffer)?.to_owned();
                 self.update_state(
@@ -556,7 +560,8 @@ impl InboundRequest {
             .entry(payload_id)
             .or_insert_with(|| Vec::with_capacity(usize::try_from(header.total_size()).unwrap_or_default()));
 
-        let buffer_len = self.state.payload_buffers.get(&payload_id).unwrap().len();
+        let buffer_len = self.state.payload_buffers.get(&payload_id)
+            .ok_or_else(|| anyhow!("Missing payload buffer"))?.len();
         if chunk.offset() != buffer_len as i64 {
             self.state.payload_buffers.remove(&payload_id);
             return Err(anyhow!(
@@ -566,11 +571,10 @@ impl InboundRequest {
             ));
         }
 
+        if let Some(buffer) = self.state.payload_buffers.get_mut(&payload_id)
+            && let Some(body) = &chunk.body
         {
-            let buffer = self.state.payload_buffers.get_mut(&payload_id).unwrap();
-            if let Some(body) = &chunk.body {
-                buffer.extend(body);
-            }
+            buffer.extend(body);
         }
 
         // Check if this is the final chunk
@@ -581,7 +585,8 @@ impl InboundRequest {
                 .is_some_and(|tp| tp.get_i64_value() == payload_id);
 
             // Take the buffer out to release the borrow
-            let mut buffer = self.state.payload_buffers.remove(&payload_id).unwrap();
+            let mut buffer = self.state.payload_buffers.remove(&payload_id)
+                .ok_or_else(|| anyhow!("Missing payload buffer"))?;
 
             if is_text_payload {
                 return self.finish_text_transfer(&mut buffer).await;
@@ -628,11 +633,9 @@ impl InboundRequest {
         }
 
         if !chunk.body().is_empty() {
-            file_internal
-                .file
-                .as_ref()
-                .unwrap()
-                .write_all_at(chunk.body(), u64::try_from(current_offset).unwrap_or_default())?;
+            let file = file_internal.file.as_ref()
+                .ok_or_else(|| anyhow!("File handle not available"))?;
+            file.write_all_at(chunk.body(), u64::try_from(current_offset).unwrap_or_default())?;
             file_internal.bytes_transferred += chunk_size as i64;
 
             self.update_state(
@@ -695,14 +698,17 @@ impl InboundRequest {
         &mut self,
         smsg: &SecureMessage,
     ) -> Result<(), anyhow::Error> {
-        let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
+        let recv_hmac_key = self.state.recv_hmac_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing recv_hmac_key"))?;
+        let mut hmac = HmacSha256::new_from_slice(recv_hmac_key)?;
         hmac.update(&smsg.header_and_body);
         if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice() {
             return Err(anyhow!("hmac!=signature"));
         }
 
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;
-        let key = self.state.decrypt_key.as_ref().unwrap();
+        let key = self.state.decrypt_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing decrypt_key"))?;
 
         let mut cipher = Cipher::new_256(key[..AES_256_KEY_LEN].try_into()?);
         cipher.set_auto_padding(true);
@@ -939,7 +945,8 @@ impl InboundRequest {
             .await;
         } else if introduction.text_metadata.len() == 1 {
             trace!("process_introduction: handling text_metadata");
-            let meta = introduction.text_metadata.first().unwrap();
+            let meta = introduction.text_metadata.first()
+                .ok_or_else(|| anyhow!("Missing text_metadata"))?;
 
             match meta.r#type() {
                 text_metadata::Type::Url => {
@@ -998,7 +1005,8 @@ impl InboundRequest {
             }
         } else if introduction.wifi_credentials_metadata.len() == 1 {
             trace!("process_introduction: handling wifi_credentials_metadata");
-            let meta = introduction.wifi_credentials_metadata.first().unwrap();
+            let meta = introduction.wifi_credentials_metadata.first()
+                .ok_or_else(|| anyhow!("Missing wifi_credentials_metadata"))?;
 
             let metadata = TransferMetadata {
                 id: self.state.id.clone(),
@@ -1059,7 +1067,8 @@ impl InboundRequest {
         let ids: Vec<i64> = self.state.transferred_files.keys().copied().collect();
 
         for id in ids {
-            let mfi = self.state.transferred_files.get_mut(&id).unwrap();
+            let mfi = self.state.transferred_files.get_mut(&id)
+                .ok_or_else(|| anyhow!("Missing transferred_file entry"))?;
 
             let file = File::create(&mfi.file_url)?;
             info!("Created file: {:?}", &file);
@@ -1138,15 +1147,21 @@ impl InboundRequest {
         }
 
         let encoded_point = EncodedPoint::from_bytes(bytes)?;
-        let peer_key = PublicKey::from_encoded_point(&encoded_point).unwrap();
-        let priv_key = self.state.private_key.as_ref().unwrap();
+        let peer_key: PublicKey = Option::from(PublicKey::from_encoded_point(&encoded_point))
+            .ok_or_else(|| anyhow!("Invalid peer public key"))?;
+        let priv_key = self.state.private_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing private_key"))?;
 
         let dhs = diffie_hellman(priv_key.to_nonzero_scalar(), peer_key.as_affine());
         let derived_secret = Sha256::digest(dhs.raw_secret_bytes());
 
+        let client_init = self.state.client_init_msg_data.as_ref()
+            .ok_or_else(|| anyhow!("Missing client_init_msg_data"))?;
+        let server_init = self.state.server_init_data.as_ref()
+            .ok_or_else(|| anyhow!("Missing server_init_data"))?;
         let mut ukey_info: Vec<u8> = vec![];
-        ukey_info.extend_from_slice(self.state.client_init_msg_data.as_ref().unwrap());
-        ukey_info.extend_from_slice(self.state.server_init_data.as_ref().unwrap());
+        ukey_info.extend_from_slice(client_init);
+        ukey_info.extend_from_slice(server_init);
 
         let auth_label = "UKEY2 v1 auth".as_bytes();
         let next_label = "UKEY2 v1 next".as_bytes();
@@ -1277,11 +1292,14 @@ impl InboundRequest {
             message: Some(frame.encode_to_vec()),
         };
 
-        let key = self.state.encrypt_key.as_ref().unwrap();
+        let key = self.state.encrypt_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing encrypt_key"))?;
         let msg_data = d2d_msg.encode_to_vec();
         let iv = gen_random(16);
 
-        let mut cipher = Cipher::new_256(&key[..AES_256_KEY_LEN].try_into().unwrap());
+        let key_bytes: &[u8; AES_256_KEY_LEN] = key[..AES_256_KEY_LEN].try_into()
+            .map_err(|_| anyhow!("Invalid encrypt_key length"))?;
+        let mut cipher = Cipher::new_256(key_bytes);
         cipher.set_auto_padding(true);
         let encrypted = cipher.cbc_encrypt(&iv, &msg_data);
 
@@ -1302,7 +1320,9 @@ impl InboundRequest {
             },
         };
 
-        let mut hmac = HmacSha256::new_from_slice(self.state.send_hmac_key.as_ref().unwrap())?;
+        let send_hmac_key = self.state.send_hmac_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing send_hmac_key"))?;
+        let mut hmac = HmacSha256::new_from_slice(send_hmac_key)?;
         hmac.update(&hb.encode_to_vec());
         let result = hmac.finalize();
 

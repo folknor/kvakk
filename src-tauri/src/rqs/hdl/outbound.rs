@@ -211,7 +211,9 @@ impl OutboundRequest {
     }
 
     pub async fn send_connection_request(&mut self) -> Result<(), anyhow::Error> {
-        let device_name = DEVICE_NAME.read().unwrap().clone();
+        let device_name = DEVICE_NAME.read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "Unknown".to_string());
         let request = location_nearby_connections::OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
             v1: Some(location_nearby_connections::V1Frame {
@@ -244,8 +246,8 @@ impl OutboundRequest {
         let (secret_key, public_key) = gen_ecdsa_keypair();
 
         let encoded_point = public_key.to_encoded_point(false);
-        let x = encoded_point.x().unwrap();
-        let y = encoded_point.y().unwrap();
+        let x = encoded_point.x().ok_or_else(|| anyhow!("Missing x coordinate"))?;
+        let y = encoded_point.y().ok_or_else(|| anyhow!("Missing y coordinate"))?;
 
         let pkey = GenericPublicKey {
             r#type: PublicKeyType::EcP256.into(),
@@ -339,8 +341,9 @@ impl OutboundRequest {
         };
 
         self.finalize_key_exchange(server_public_key).await?;
-        self.send_frame(self.state.ukey_client_finish_msg_data.clone().unwrap())
-            .await?;
+        let client_finish_data = self.state.ukey_client_finish_msg_data.clone()
+            .ok_or_else(|| anyhow!("Missing ukey_client_finish_msg_data"))?;
+        self.send_frame(client_finish_data).await?;
 
         let frame = location_nearby_connections::OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
@@ -381,12 +384,11 @@ impl OutboundRequest {
             )));
         }
 
-        if v1_frame.connection_response.is_none() {
-            return Err(anyhow!(format!("Unexpected None connection_response",)));
-        }
+        let connection_response = v1_frame.connection_response.as_ref()
+            .ok_or_else(|| anyhow!("Unexpected None connection_response"))?;
 
-        if v1_frame.connection_response.as_ref().unwrap().response() != ResponseStatus::Accept {
-            return Err(anyhow!(format!("Connection rejected by third party",)));
+        if connection_response.response() != ResponseStatus::Accept {
+            return Err(anyhow!("Connection rejected by third party"));
         }
 
         let paired_encryption = sharing_nearby::Frame {
@@ -411,17 +413,19 @@ impl OutboundRequest {
         &mut self,
         smsg: &SecureMessage,
     ) -> Result<(), anyhow::Error> {
-        let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
+        let recv_hmac_key = self.state.recv_hmac_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing recv_hmac_key"))?;
+        let mut hmac = HmacSha256::new_from_slice(recv_hmac_key)?;
         hmac.update(&smsg.header_and_body);
-        if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice()
-        {
+        if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice() {
             return Err(anyhow!("hmac!=signature"));
         }
 
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;
 
         let msg_data = header_and_body.body;
-        let key = self.state.decrypt_key.as_ref().unwrap();
+        let key = self.state.decrypt_key.as_ref()
+            .ok_or_else(|| anyhow!("Missing decrypt_key"))?;
 
         let mut cipher = Cipher::new_256(key[..AES_256_KEY_LEN].try_into()?);
         cipher.set_auto_padding(true);
@@ -479,7 +483,8 @@ impl OutboundRequest {
                             .or_insert_with(|| Vec::with_capacity(usize::try_from(header.total_size()).unwrap_or_default()));
 
                         // Get the current length of the buffer, if it exists, without holding a mutable borrow.
-                        let buffer_len = self.state.payload_buffers.get(&payload_id).unwrap().len();
+                        let buffer_len = self.state.payload_buffers.get(&payload_id)
+                            .ok_or_else(|| anyhow!("Missing payload buffer"))?.len();
                         if chunk.offset() != buffer_len as i64 {
                             self.state.payload_buffers.remove(&payload_id);
                             return Err(anyhow!(
@@ -489,7 +494,8 @@ impl OutboundRequest {
                             ));
                         }
 
-                        let buffer = self.state.payload_buffers.get_mut(&payload_id).unwrap();
+                        let buffer = self.state.payload_buffers.get_mut(&payload_id)
+                            .ok_or_else(|| anyhow!("Missing payload buffer"))?;
                         if let Some(body) = &chunk.body {
                             buffer.extend(body);
                         }
@@ -670,7 +676,7 @@ impl OutboundRequest {
                         .ok_or_else(|| anyhow!("Failed to get file_name for {f}"))?;
                     let fmeta = FileMetadata {
                         payload_id: Some(rand::rng().random::<i64>()),
-                        name: Some(fname.to_os_string().into_string().unwrap()),
+                        name: Some(fname.to_string_lossy().into_owned()),
                         size: Some(fmetadata.size() as i64),
                         mime_type: Some(ftype),
                         r#type: Some(meta_type.into()),
@@ -760,13 +766,16 @@ impl OutboundRequest {
                 return Ok(false);
             }
 
-            if curr_state.file.is_none() {
-                warn!("File {file_id} is none");
-                return Ok(false);
-            }
+            let mut file = match curr_state.file.as_ref() {
+                Some(f) => f,
+                None => {
+                    warn!("File {file_id} is none");
+                    return Ok(false);
+                }
+            };
 
             let mut buffer = vec![0u8; 512 * 1024];
-            let bytes_read = curr_state.file.as_ref().unwrap().read(&mut buffer)?;
+            let bytes_read = file.read(&mut buffer)?;
 
             Some((
                 InternalFileInfo {
@@ -896,13 +905,14 @@ impl OutboundRequest {
         &mut self,
         v1_frame: &sharing_nearby::V1Frame,
     ) -> Result<(), anyhow::Error> {
-        if v1_frame.r#type() != sharing_nearby::v1_frame::FrameType::Response
-            || v1_frame.connection_response.is_none()
-        {
+        if v1_frame.r#type() != sharing_nearby::v1_frame::FrameType::Response {
             return Err(anyhow!("Missing required fields"));
         }
 
-        match v1_frame.connection_response.as_ref().unwrap().status() {
+        let connection_response = v1_frame.connection_response.as_ref()
+            .ok_or_else(|| anyhow!("Missing connection_response"))?;
+
+        match connection_response.status() {
             sharing_nearby::connection_response_frame::Status::Accept => {
                 info!("State is now State::SendingFiles");
                 self.update_state(|e| { e.state = TransferState::SendingFiles; }, true).await;
@@ -912,10 +922,7 @@ impl OutboundRequest {
             | sharing_nearby::connection_response_frame::Status::NotEnoughSpace
             | sharing_nearby::connection_response_frame::Status::UnsupportedAttachmentType
             | sharing_nearby::connection_response_frame::Status::TimedOut => {
-                warn!(
-                    "Cannot process: consent denied: {:?}",
-                    v1_frame.connection_response.as_ref().unwrap().status()
-                );
+                warn!("Cannot process: consent denied: {:?}", connection_response.status());
                 self.update_state(|e| { e.state = TransferState::Disconnected; }, true).await;
                 self.disconnection().await?;
                 return Err(anyhow!(crate::errors::AppError::NotAnError));
@@ -974,15 +981,30 @@ impl OutboundRequest {
         }
 
         let encoded_point = EncodedPoint::from_bytes(bytes)?;
-        let peer_key = PublicKey::from_encoded_point(&encoded_point).unwrap();
-        let priv_key = self.state.private_key.as_ref().unwrap();
+        let peer_key: PublicKey = Option::from(PublicKey::from_encoded_point(&encoded_point))
+            .ok_or_else(|| anyhow!("Invalid peer public key from encoded point"))?;
+        let priv_key = self
+            .state
+            .private_key
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing private key for key exchange"))?;
 
         let dhs = diffie_hellman(priv_key.to_nonzero_scalar(), peer_key.as_affine());
         let derived_secret = Sha256::digest(dhs.raw_secret_bytes());
 
         let mut ukey_info: Vec<u8> = vec![];
-        ukey_info.extend_from_slice(self.state.client_init_msg_data.as_ref().unwrap());
-        ukey_info.extend_from_slice(self.state.server_init_data.as_ref().unwrap());
+        ukey_info.extend_from_slice(
+            self.state
+                .client_init_msg_data
+                .as_ref()
+                .ok_or_else(|| anyhow!("Missing client init message data"))?,
+        );
+        ukey_info.extend_from_slice(
+            self.state
+                .server_init_data
+                .as_ref()
+                .ok_or_else(|| anyhow!("Missing server init data"))?,
+        );
 
         let auth_label = "UKEY2 v1 auth".as_bytes();
         let next_label = "UKEY2 v1 next".as_bytes();
@@ -1117,11 +1139,18 @@ impl OutboundRequest {
             message: Some(frame.encode_to_vec()),
         };
 
-        let key = self.state.encrypt_key.as_ref().unwrap();
+        let key = self
+            .state
+            .encrypt_key
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing encryption key"))?;
         let msg_data = d2d_msg.encode_to_vec();
         let iv = gen_random(16);
 
-        let mut cipher = Cipher::new_256(&key[..AES_256_KEY_LEN].try_into().unwrap());
+        let key_bytes: &[u8; AES_256_KEY_LEN] = key[..AES_256_KEY_LEN]
+            .try_into()
+            .map_err(|_| anyhow!("Invalid encryption key length"))?;
+        let mut cipher = Cipher::new_256(key_bytes);
         cipher.set_auto_padding(true);
         let encrypted = cipher.cbc_encrypt(&iv, &msg_data);
 
@@ -1142,7 +1171,12 @@ impl OutboundRequest {
             },
         };
 
-        let mut hmac = HmacSha256::new_from_slice(self.state.send_hmac_key.as_ref().unwrap())?;
+        let hmac_key = self
+            .state
+            .send_hmac_key
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing HMAC key for sending"))?;
+        let mut hmac = HmacSha256::new_from_slice(hmac_key)?;
         hmac.update(&hb.encode_to_vec());
         let result = hmac.finalize();
 

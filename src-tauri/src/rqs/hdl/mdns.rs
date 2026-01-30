@@ -102,7 +102,9 @@ impl MDnsServer {
 
                     let receiver = self.daemon.unregister(self.service_info.get_fullname())?;
                     drop(receiver.recv());
-                    _ = self.visibility_sender.lock().unwrap().send(Visibility::Invisible);
+                    if let Ok(sender) = self.visibility_sender.lock() {
+                        _ = sender.send(Visibility::Invisible);
+                    }
                 }
             }
         }

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mdns_sd::{AddrType, ServiceDaemon, ServiceInfo};
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::watch;
 use tokio::time::{interval_at, Instant};
@@ -90,7 +90,7 @@ impl MDnsServer {
                         // Android can sometime not see the mDNS service if the service
                         // was running BEFORE Android started the Discovery phase for QuickShare.
                         // So resend a broadcast if there's a android device sending.
-                        self.daemon.register_resend(self.service_info.get_fullname())?;
+                        self.daemon.register(self.service_info.clone())?;
                     } else {
                         self.daemon.register(self.service_info.clone())?;
                     }
@@ -140,7 +140,7 @@ impl MDnsServer {
             service_port,
             &properties[..],
         )?
-        .enable_addr_auto(AddrType::V4);
+        .enable_addr_auto();
 
         Ok(si)
     }

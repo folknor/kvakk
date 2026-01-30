@@ -461,25 +461,252 @@ impl InboundRequest {
         Ok(())
     }
 
+    /// Parse WiFi password from payload buffer.
+    fn parse_wifi_password(buffer: &[u8]) -> anyhow::Result<String> {
+        if buffer.len() < 4 {
+            anyhow::bail!("Buffer too short ({buffer:?})");
+        }
+
+        if buffer[buffer.len() - 2] != 0x10 {
+            anyhow::bail!("Buffer ({buffer:?}) doesn't end with 0x10 0x?? as expected");
+        }
+
+        let len = buffer[1] as usize;
+        let payload_buffer = buffer
+            .get(2..2 + len)
+            .with_context(|| anyhow!("Buffer too short, can't retrieve payload of length {len}"))?;
+
+        Ok(String::from_utf8(payload_buffer.to_vec())?)
+    }
+
+    /// Complete a text payload transfer (URL, text, or WiFi credentials).
+    async fn finish_text_transfer(&mut self, buffer: &mut [u8]) -> Result<(), anyhow::Error> {
+        info!("Transfer finished");
+
+        match self.state.text_payload.clone().unwrap() {
+            TextPayloadInfo::Url(_) => {
+                let payload = std::str::from_utf8(buffer)?.to_owned();
+                self.update_state(
+                    |e| {
+                        if let Some(tmd) = e.transfer_metadata.as_mut() {
+                            tmd.payload = Some(TransferPayload::Url(payload));
+                        }
+                    },
+                    false,
+                ).await;
+            }
+            TextPayloadInfo::Text(_) => {
+                let payload = std::str::from_utf8(buffer)?.to_owned();
+                self.update_state(
+                    |e| {
+                        if let Some(tmd) = e.transfer_metadata.as_mut() {
+                            tmd.payload = Some(TransferPayload::Text(payload));
+                        }
+                    },
+                    false,
+                ).await;
+            }
+            TextPayloadInfo::Wifi((_, ssid, security_type)) => {
+                let payload = match security_type {
+                    kind @ SecurityType::UnknownSecurityType => kind.as_str_name().into(),
+                    SecurityType::Open => String::new(),
+                    SecurityType::WpaPsk | SecurityType::Wep => {
+                        Self::parse_wifi_password(buffer)
+                            .inspect_err(|err| error!("{err:#}"))
+                            .unwrap_or_default()
+                    }
+                };
+
+                self.update_state(
+                    |e| {
+                        if let Some(tmd) = e.transfer_metadata.as_mut() {
+                            tmd.payload = Some(TransferPayload::Wifi {
+                                ssid,
+                                password: payload,
+                                security_type,
+                            });
+                        }
+                    },
+                    false,
+                ).await;
+            }
+        }
+
+        self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
+        self.disconnection().await?;
+        Err(anyhow!(crate::errors::AppError::NotAnError))
+    }
+
+    /// Process a bytes payload chunk.
+    async fn process_bytes_payload(
+        &mut self,
+        header: &PayloadHeader,
+        chunk: &PayloadChunk,
+    ) -> Result<(), anyhow::Error> {
+        info!("Processing PayloadType::Bytes");
+        let payload_id = header.id();
+
+        if header.total_size() > i64::from(SANE_FRAME_LENGTH) {
+            self.state.payload_buffers.remove(&payload_id);
+            return Err(anyhow!("Payload too large: {} bytes", header.total_size()));
+        }
+
+        self.state
+            .payload_buffers
+            .entry(payload_id)
+            .or_insert_with(|| Vec::with_capacity(header.total_size() as usize));
+
+        let buffer_len = self.state.payload_buffers.get(&payload_id).unwrap().len();
+        if chunk.offset() != buffer_len as i64 {
+            self.state.payload_buffers.remove(&payload_id);
+            return Err(anyhow!(
+                "Unexpected chunk offset: {}, expected: {}",
+                chunk.offset(),
+                buffer_len
+            ));
+        }
+
+        {
+            let buffer = self.state.payload_buffers.get_mut(&payload_id).unwrap();
+            if let Some(body) = &chunk.body {
+                buffer.extend(body);
+            }
+        }
+
+        // Check if this is the final chunk
+        if (chunk.flags() & 1) == 1 {
+            debug!("End of bytes payload");
+
+            let is_text_payload = self.state.text_payload.as_ref()
+                .is_some_and(|tp| tp.get_i64_value() == payload_id);
+
+            // Take the buffer out to release the borrow
+            let mut buffer = self.state.payload_buffers.remove(&payload_id).unwrap();
+
+            if is_text_payload {
+                return self.finish_text_transfer(&mut buffer).await;
+            }
+
+            let inner_frame = sharing_nearby::Frame::decode(buffer.as_slice())?;
+            self.process_transfer_setup(&inner_frame).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Process a file payload chunk.
+    async fn process_file_payload(
+        &mut self,
+        header: &PayloadHeader,
+        chunk: &PayloadChunk,
+    ) -> Result<(), anyhow::Error> {
+        info!("Processing PayloadType::File");
+        let payload_id = header.id();
+
+        let file_internal = self
+            .state
+            .transferred_files
+            .get_mut(&payload_id)
+            .ok_or_else(|| anyhow!("File payload ID ({payload_id}) is not known"))?;
+
+        let current_offset = file_internal.bytes_transferred;
+        if chunk.offset() != current_offset {
+            return Err(anyhow!(
+                "Invalid offset into file {}, expected {}",
+                chunk.offset(),
+                current_offset
+            ));
+        }
+
+        let chunk_size = chunk.body().len();
+        if current_offset + chunk_size as i64 > file_internal.total_size {
+            return Err(anyhow!(
+                "Transferred file size exceeds previously specified value: {} vs {}",
+                current_offset + chunk_size as i64,
+                file_internal.total_size
+            ));
+        }
+
+        if !chunk.body().is_empty() {
+            file_internal
+                .file
+                .as_ref()
+                .unwrap()
+                .write_all_at(chunk.body(), current_offset as u64)?;
+            file_internal.bytes_transferred += chunk_size as i64;
+
+            self.update_state(
+                |e| {
+                    if let Some(tmd) = e.transfer_metadata.as_mut() {
+                        tmd.ack_bytes += chunk_size as u64;
+                    }
+                },
+                true,
+            ).await;
+        } else if (chunk.flags() & 1) == 1 {
+            // Final chunk marker
+            self.state.transferred_files.remove(&payload_id);
+            if self.state.transferred_files.is_empty() {
+                info!("Transfer finished");
+                self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
+                self.disconnection().await?;
+                return Err(anyhow!(crate::errors::AppError::NotAnError));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a payload transfer frame.
+    async fn process_payload_transfer(
+        &mut self,
+        v1_frame: &location_nearby_connections::V1Frame,
+    ) -> Result<(), anyhow::Error> {
+        trace!("Received FrameType::PayloadTransfer");
+        let payload_transfer = v1_frame
+            .payload_transfer
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+        let header = payload_transfer
+            .payload_header
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing required fields"))?;
+        let chunk = payload_transfer
+            .payload_chunk
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+        match header.r#type() {
+            payload_header::PayloadType::Bytes => self.process_bytes_payload(header, chunk).await,
+            payload_header::PayloadType::File => self.process_file_payload(header, chunk).await,
+            payload_header::PayloadType::Stream => {
+                error!("Unhandled PayloadType::Stream");
+                Ok(())
+            }
+            payload_header::PayloadType::UnknownPayloadType => {
+                error!("Invalid PayloadType::UnknownPayloadType");
+                Ok(())
+            }
+        }
+    }
+
     async fn decrypt_and_process_secure_message(
         &mut self,
         smsg: &SecureMessage,
     ) -> Result<(), anyhow::Error> {
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
-        if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice()
-        {
+        if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice() {
             return Err(anyhow!("hmac!=signature"));
         }
 
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;
-
-        let msg_data = header_and_body.body;
         let key = self.state.decrypt_key.as_ref().unwrap();
 
         let mut cipher = Cipher::new_256(key[..AES_256_KEY_LEN].try_into()?);
         cipher.set_auto_padding(true);
-        let decrypted = cipher.cbc_decrypt(header_and_body.header.iv(), &msg_data);
+        let decrypted = cipher.cbc_decrypt(header_and_body.header.iv(), &header_and_body.body);
 
         let d2d_msg = DeviceToDeviceMessage::decode(&*decrypted)?;
 
@@ -497,245 +724,10 @@ impl InboundRequest {
             .v1
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
+
         match v1_frame.r#type() {
             location_nearby_connections::v1_frame::FrameType::PayloadTransfer => {
-                trace!("Received FrameType::PayloadTransfer");
-                let payload_transfer = v1_frame
-                    .payload_transfer
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("Missing required fields"))?;
-
-                let header = payload_transfer
-                    .payload_header
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("Missing required fields"))?;
-                let chunk = payload_transfer
-                    .payload_chunk
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("Missing required fields"))?;
-
-                match header.r#type() {
-                    payload_header::PayloadType::Bytes => {
-                        info!("Processing PayloadType::Bytes");
-                        let payload_id = header.id();
-
-                        if header.total_size() > i64::from(SANE_FRAME_LENGTH) {
-                            self.state.payload_buffers.remove(&payload_id);
-                            return Err(anyhow!(
-                                "Payload too large: {} bytes",
-                                header.total_size()
-                            ));
-                        }
-
-                        self.state
-                            .payload_buffers
-                            .entry(payload_id)
-                            .or_insert_with(|| Vec::with_capacity(header.total_size() as usize));
-
-                        // Get the current length of the buffer, if it exists, without holding a mutable borrow.
-                        let buffer_len = self.state.payload_buffers.get(&payload_id).unwrap().len();
-                        if chunk.offset() != buffer_len as i64 {
-                            self.state.payload_buffers.remove(&payload_id);
-                            return Err(anyhow!(
-                                "Unexpected chunk offset: {}, expected: {}",
-                                chunk.offset(),
-                                buffer_len
-                            ));
-                        }
-
-                        let buffer = self.state.payload_buffers.get_mut(&payload_id).unwrap();
-                        if let Some(body) = &chunk.body {
-                            buffer.extend(body);
-                        }
-
-                        if (chunk.flags() & 1) == 1 {
-                            debug!("Chunk flags & 1 == 1 ?? End of data ??");
-
-                            if self.state.text_payload.is_some()
-                                && self.state.text_payload.as_ref().unwrap().get_i64_value()
-                                    == payload_id
-                            {
-                                info!("Transfer finished");
-
-                                match self.state.text_payload.clone().unwrap() {
-                                    TextPayloadInfo::Url(_) => {
-                                        let payload = std::str::from_utf8(buffer)?.to_owned();
-                                        self.update_state(
-                                            |e| {
-                                                if let Some(tmd) = e.transfer_metadata.as_mut() {
-                                                    tmd.payload =
-                                                        Some(TransferPayload::Url(payload));
-                                                }
-                                            },
-                                            false,
-                                        )
-                                        .await;
-                                    }
-                                    TextPayloadInfo::Text(_) => {
-                                        let payload = std::str::from_utf8(buffer)?.to_owned();
-                                        self.update_state(
-                                            |e| {
-                                                if let Some(tmd) = e.transfer_metadata.as_mut() {
-                                                    tmd.payload =
-                                                        Some(TransferPayload::Text(payload));
-                                                }
-                                            },
-                                            false,
-                                        )
-                                        .await;
-                                    }
-                                    // FIXME: ChannelMessage's structure needs to be redone as well
-                                    // It needs to have TextPayloadInfo instead of TextPayloadType
-                                    TextPayloadInfo::Wifi((_, ssid, security_type)) => {
-                                        // ~~Payload seems to be within two DLE (0x10) characters
-                                        // At least for WpaPsk, not sure about Wep~~
-                                        //
-                                        // Nope, that's wrong, my Wi-Fi password just happened to have 16 characters
-                                        // which tripped up the previous logic.
-                                        //
-                                        // So, the password seems to start with 0x0A followed by a byte indicating
-                                        // the password or payload length. And, the payload ends with 0x10 0x??
-                                        // The last byte is sometimes 00 and other times 01
-                                        fn parse_password_payload(
-                                            buffer: &mut Vec<u8>,
-                                        ) -> anyhow::Result<String>
-                                        {
-                                            if buffer.len() < 4 {
-                                                anyhow::bail!("Buffer too short ({buffer:?})");
-                                            }
-
-                                            if buffer[(buffer.len() - 1) - 1] != 0x10 {
-                                                anyhow::bail!(
-                                                    "Buffer ({buffer:?}) doesn't ends with 0x10 0x?? as expected"
-                                                );
-                                            }
-
-                                            let len = *buffer
-                                                .get(1)
-                                                .expect("Validated for minimum length of 4")
-                                                as usize;
-
-                                            let payload_buffer = buffer.get(2..2 + len).with_context(||anyhow!( "Buffer too short ({buffer:?}) can't retrieve payload of length {len}"))?;
-
-                                            Ok(String::from_utf8(payload_buffer.to_owned())?)
-                                        }
-
-                                        let payload = match security_type {
-                                            kind @ SecurityType::UnknownSecurityType => {
-                                                kind.as_str_name().into()
-                                            }
-                                            SecurityType::Open => String::new(),
-                                            SecurityType::WpaPsk | SecurityType::Wep => {
-                                                parse_password_payload(buffer)
-                                                    .inspect_err(|err| error!("{err:#}"))
-                                                    .unwrap_or_default()
-                                            }
-                                        };
-
-                                        self.update_state(
-                                            |e| {
-                                                if let Some(tmd) = e.transfer_metadata.as_mut() {
-                                                    tmd.payload = Some(TransferPayload::Wifi {
-                                                        ssid,
-                                                        password: payload,
-                                                        security_type,
-                                                    });
-                                                }
-                                            },
-                                            false,
-                                        )
-                                        .await;
-                                    }
-                                }
-
-                                self.update_state(
-                                    |e| {
-                                        e.state = TransferState::Finished;
-                                    },
-                                    true,
-                                )
-                                .await;
-                                self.disconnection().await?;
-                                return Err(anyhow!(crate::errors::AppError::NotAnError));
-                            } else {
-                                let inner_frame = sharing_nearby::Frame::decode(buffer.as_slice())?;
-                                self.process_transfer_setup(&inner_frame).await?;
-                            }
-                        }
-                    }
-                    payload_header::PayloadType::File => {
-                        info!("Processing PayloadType::File");
-                        let payload_id = header.id();
-
-                        let file_internal = self
-                            .state
-                            .transferred_files
-                            .get_mut(&payload_id)
-                            .ok_or_else(|| {
-                                anyhow!("File payload ID ({payload_id}) is not known")
-                            })?;
-
-                        let current_offset = file_internal.bytes_transferred;
-                        if chunk.offset() != current_offset {
-                            return Err(anyhow!(
-                                "Invalid offset into file {}, expected {}",
-                                chunk.offset(),
-                                current_offset
-                            ));
-                        }
-
-                        let chunk_size = chunk.body().len();
-                        if current_offset + chunk_size as i64 > file_internal.total_size {
-                            return Err(anyhow!(
-                                "Transferred file size exceeds previously specified value: {} vs {}",
-                                current_offset + chunk_size as i64,
-                                file_internal.total_size
-                            ));
-                        }
-
-                        if !chunk.body().is_empty() {
-                            file_internal
-                                .file
-                                .as_ref()
-                                .unwrap()
-                                .write_all_at(chunk.body(), current_offset as u64)?;
-                            file_internal.bytes_transferred += chunk_size as i64;
-
-                            self.update_state(
-                                |e| {
-                                    if let Some(tmd) = e.transfer_metadata.as_mut() {
-                                        tmd.ack_bytes += chunk_size as u64;
-                                    }
-                                },
-                                true,
-                            )
-                            .await;
-                        } else if (chunk.flags() & 1) == 1 {
-                            self.state.transferred_files.remove(&payload_id);
-                            if self.state.transferred_files.is_empty() {
-                                info!("Transfer finished");
-                                self.update_state(
-                                    |e| {
-                                        e.state = TransferState::Finished;
-                                    },
-                                    true,
-                                )
-                                .await;
-                                self.disconnection().await?;
-                                return Err(anyhow!(crate::errors::AppError::NotAnError));
-                            }
-                        }
-                    }
-                    payload_header::PayloadType::Stream => {
-                        error!("Unhandled PayloadType::Stream: {:?}", header.r#type());
-                    }
-                    payload_header::PayloadType::UnknownPayloadType => {
-                        error!(
-                            "Invalid PayloadType::UnknownPayloadType: {:?}",
-                            header.r#type()
-                        );
-                    }
-                }
+                self.process_payload_transfer(v1_frame).await?;
             }
             location_nearby_connections::v1_frame::FrameType::KeepAlive => {
                 trace!("Sending keepalive");

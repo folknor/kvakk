@@ -720,6 +720,178 @@ impl OutboundRequest {
         Ok(())
     }
 
+    /// Check if a cancellation request was received.
+    /// Returns true if transfer should be cancelled.
+    fn check_for_cancellation(&mut self) -> bool {
+        match self.receiver.try_recv() {
+            Ok(channel_msg) => {
+                if channel_msg.id == self.state.id
+                    && let channel::Message::Lib { action } = &channel_msg.msg
+                {
+                    debug!("outbound: got: {channel_msg:?}");
+                    if action == &TransferAction::TransferCancel {
+                        return true;
+                    }
+                }
+                false
+            }
+            Err(TryRecvError::Empty) => false,
+            Err(e) => {
+                error!("outbound: channel error: {e}");
+                false
+            }
+        }
+    }
+
+    /// Send a single file chunk and update state.
+    /// Returns Ok(true) if more chunks to send, Ok(false) if file complete or should break.
+    async fn send_file_chunk(&mut self, file_id: i64) -> Result<bool, anyhow::Error> {
+        // Workaround to limit scope of the immutable borrow on self
+        let chunk_info = {
+            let curr_state = match self.state.transferred_files.get(&file_id) {
+                Some(s) => s,
+                None => return Ok(false),
+            };
+
+            info!("> Currently sending {:?}", curr_state.file_url);
+            if curr_state.bytes_transferred == curr_state.total_size {
+                debug!("File {file_id} finished");
+                self.update_state(|e| { e.transferred_files.remove(&file_id); }, false).await;
+                return Ok(false);
+            }
+
+            if curr_state.file.is_none() {
+                warn!("File {file_id} is none");
+                return Ok(false);
+            }
+
+            let mut buffer = vec![0u8; 512 * 1024];
+            let bytes_read = curr_state.file.as_ref().unwrap().read(&mut buffer)?;
+
+            Some((
+                InternalFileInfo {
+                    payload_id: curr_state.payload_id,
+                    file_url: curr_state.file_url.clone(),
+                    bytes_transferred: curr_state.bytes_transferred,
+                    total_size: curr_state.total_size,
+                    file: None,
+                },
+                buffer,
+                bytes_read,
+            ))
+        };
+
+        let Some((curr_state, buffer, bytes_read)) = chunk_info else {
+            return Ok(false);
+        };
+
+        info!(
+            "> File ready: {bytes_read} bytes, left to send: {}, offset: {}",
+            curr_state.total_size - curr_state.bytes_transferred,
+            curr_state.bytes_transferred
+        );
+
+        let payload_header = PayloadHeader {
+            id: Some(file_id),
+            r#type: Some(payload_header::PayloadType::File.into()),
+            total_size: Some(curr_state.total_size),
+            is_sensitive: Some(false),
+            file_name: curr_state.file_url.file_name().map(|n| n.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        // Send the chunk
+        let wrapper = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into()),
+                payload_transfer: Some(PayloadTransferFrame {
+                    packet_type: Some(PacketType::Data.into()),
+                    payload_chunk: Some(PayloadChunk {
+                        offset: Some(curr_state.bytes_transferred),
+                        flags: Some(0),
+                        body: Some(buffer[..bytes_read].to_vec()),
+                    }),
+                    payload_header: Some(payload_header.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+        self.encrypt_and_send(&wrapper).await?;
+
+        // Update transfer progress
+        self.update_state(
+            |e| {
+                if let Some(mu) = e.transferred_files.get_mut(&file_id) {
+                    mu.bytes_transferred += bytes_read as i64;
+                }
+                if let Some(tmd) = e.transfer_metadata.as_mut() {
+                    tmd.ack_bytes += bytes_read as u64;
+                }
+            },
+            true,
+        ).await;
+
+        // Check if this was the last chunk
+        if curr_state.bytes_transferred + bytes_read as i64 == curr_state.total_size {
+            debug!(
+                "File {file_id} finished, offset: {} / total: {}",
+                curr_state.bytes_transferred + bytes_read as i64,
+                curr_state.total_size
+            );
+
+            // Send final chunk marker
+            let final_wrapper = location_nearby_connections::OfflineFrame {
+                version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+                v1: Some(location_nearby_connections::V1Frame {
+                    r#type: Some(location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into()),
+                    payload_transfer: Some(PayloadTransferFrame {
+                        packet_type: Some(PacketType::Data.into()),
+                        payload_chunk: Some(PayloadChunk {
+                            offset: Some(curr_state.total_size),
+                            flags: Some(1), // lastChunk
+                            body: Some(vec![]),
+                        }),
+                        payload_header: Some(payload_header),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+            };
+            self.encrypt_and_send(&final_wrapper).await?;
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    /// Send all accepted files. Returns true if completed, false if cancelled.
+    async fn send_accepted_files(&mut self) -> Result<bool, anyhow::Error> {
+        let ids: Vec<i64> = self.state.transferred_files.keys().copied().collect();
+        info!("We are sending: {ids:?}");
+
+        for file_id in ids {
+            loop {
+                // Check for cancellation before each chunk
+                if self.check_for_cancellation() {
+                    self.update_state(|e| { e.state = TransferState::Cancelled; }, true).await;
+                    self.disconnection().await?;
+                    return Ok(false);
+                }
+
+                if !self.send_file_chunk(file_id).await? {
+                    break;
+                }
+            }
+        }
+
+        info!("All files have been transferred");
+        self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
+        self.disconnection().await?;
+        Ok(true)
+    }
+
     async fn process_consent(
         &mut self,
         v1_frame: &sharing_nearby::V1Frame,
@@ -733,203 +905,8 @@ impl OutboundRequest {
         match v1_frame.connection_response.as_ref().unwrap().status() {
             sharing_nearby::connection_response_frame::Status::Accept => {
                 info!("State is now State::SendingFiles");
-                self.update_state(
-                    |e| {
-                        e.state = TransferState::SendingFiles;
-                    },
-                    true,
-                )
-                .await;
-
-                // TODO - Handle sending Text
-                let ids: Vec<i64> = self.state.transferred_files.keys().copied().collect();
-                info!("We are sending: {ids:?}");
-                let mut ids_iter = ids.into_iter();
-
-                // Loop through all files
-                'send_all_files: loop {
-                    let current = match ids_iter.next() {
-                        Some(i) => i,
-                        None => {
-                            info!("All files have been transferred");
-                            self.update_state(
-                                |e| {
-                                    e.state = TransferState::Finished;
-                                },
-                                true,
-                            )
-                            .await;
-                            self.disconnection().await?;
-                            // Breaking instead of NotAnError to allow peacefull termination
-                            break;
-                        }
-                    };
-
-                    // Loop until we reached end of file
-                    loop {
-                        // Since this task's runtime is blocked with the outer loop,
-                        // OutboundRequest::handle() will not be called again.
-                        // Thus, we need to check for cancellation here.
-                        match self.receiver.try_recv() {
-                            Ok(channel_msg) => {
-                                if channel_msg.id == self.state.id {
-                                    // TODO: if-let chains will be available in 1.88
-                                    if let channel::Message::Lib { action } = &channel_msg.msg {
-                                        debug!("outbound: got: {channel_msg:?}");
-                                        if action == &TransferAction::TransferCancel {
-                                            self.update_state(
-                                                |e| {
-                                                    e.state = TransferState::Cancelled;
-                                                },
-                                                true,
-                                            )
-                                            .await;
-                                            self.disconnection().await?;
-                                            break 'send_all_files;
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                match e {
-                                    TryRecvError::Empty => {}
-                                    e => {
-                                        error!("inbound: channel error: {e}");
-                                    }
-                                };
-                            }
-                        };
-
-                        // Workaround to limit scope of the immutable borrow on self
-                        let (curr_state, buffer, bytes_read) = {
-                            let curr_state = match self.state.transferred_files.get(&current) {
-                                Some(s) => s,
-                                None => break,
-                            };
-
-                            info!("> Currently sending {:?}", curr_state.file_url);
-                            if curr_state.bytes_transferred == curr_state.total_size {
-                                debug!("File {current} finished");
-                                self.update_state(
-                                    |e| {
-                                        e.transferred_files.remove(&current);
-                                    },
-                                    false,
-                                )
-                                .await;
-                                break;
-                            }
-
-                            if curr_state.file.is_none() {
-                                warn!("File {current} is none");
-                                break;
-                            }
-
-                            let mut buffer = vec![0u8; 512 * 1024];
-                            let bytes_read = curr_state.file.as_ref().unwrap().read(&mut buffer)?;
-
-                            (
-                                InternalFileInfo {
-                                    payload_id: curr_state.payload_id,
-                                    file_url: curr_state.file_url.clone(),
-                                    bytes_transferred: curr_state.bytes_transferred,
-                                    total_size: curr_state.total_size,
-                                    file: None,
-                                },
-                                buffer,
-                                bytes_read,
-                            )
-                        };
-
-                        let sending_buffer = buffer[..bytes_read].to_vec();
-                        info!(
-                            "> File ready: {bytes_read} bytes && {} && left to send: {} with current offset: {}",
-                            sending_buffer.len(),
-                            curr_state.total_size - curr_state.bytes_transferred,
-                            curr_state.bytes_transferred
-                        );
-
-                        let payload_header = PayloadHeader {
-                            id: Some(current),
-                            r#type: Some(payload_header::PayloadType::File.into()),
-                            total_size: Some(curr_state.total_size),
-                            is_sensitive: Some(false),
-                            file_name: curr_state
-                                .file_url
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned()),
-                            ..Default::default()
-                        };
-
-                        let wrapper = location_nearby_connections::OfflineFrame {
-							version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
-							v1: Some(location_nearby_connections::V1Frame {
-								r#type: Some(
-									location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
-								),
-								payload_transfer: Some(PayloadTransferFrame {
-									packet_type: Some(PacketType::Data.into()),
-									payload_chunk: Some(PayloadChunk {
-										offset: Some(curr_state.bytes_transferred),
-										flags: Some(0),
-										body: Some(buffer[..bytes_read].to_vec()),
-									}),
-									payload_header: Some(payload_header.clone()),
-									..Default::default()
-								}),
-								..Default::default()
-							}),
-						};
-
-                        self.encrypt_and_send(&wrapper).await?;
-                        self.update_state(
-                            |e| {
-                                if let Some(mu) = e.transferred_files.get_mut(&current) {
-                                    mu.bytes_transferred += bytes_read as i64;
-                                }
-
-                                if let Some(tmd) = e.transfer_metadata.as_mut() {
-                                    tmd.ack_bytes += bytes_read as u64;
-                                }
-                            },
-                            true,
-                        )
-                        .await;
-
-                        // If we just sent the last bytes of the file, mark it as finished
-                        if curr_state.bytes_transferred + bytes_read as i64 == curr_state.total_size
-                        {
-                            debug!(
-                                "File {current} finished, curr offset: {} over total: {}",
-                                curr_state.bytes_transferred + bytes_read as i64,
-                                curr_state.total_size
-                            );
-
-                            let wrapper = location_nearby_connections::OfflineFrame {
-								version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
-								v1: Some(location_nearby_connections::V1Frame {
-									r#type: Some(
-										location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
-									),
-									payload_transfer: Some(PayloadTransferFrame {
-										packet_type: Some(PacketType::Data.into()),
-										payload_chunk: Some(PayloadChunk {
-											offset: Some(curr_state.total_size),
-											flags: Some(1), // lastChunk
-											body: Some(vec![]),
-										}),
-										payload_header: Some(payload_header),
-										..Default::default()
-									}),
-									..Default::default()
-								}),
-							};
-
-                            self.encrypt_and_send(&wrapper).await?;
-                            break;
-                        }
-                    }
-                }
+                self.update_state(|e| { e.state = TransferState::SendingFiles; }, true).await;
+                self.send_accepted_files().await?;
             }
             sharing_nearby::connection_response_frame::Status::Reject
             | sharing_nearby::connection_response_frame::Status::NotEnoughSpace
@@ -939,25 +916,13 @@ impl OutboundRequest {
                     "Cannot process: consent denied: {:?}",
                     v1_frame.connection_response.as_ref().unwrap().status()
                 );
-                self.update_state(
-                    |e| {
-                        e.state = TransferState::Disconnected;
-                    },
-                    true,
-                )
-                .await;
+                self.update_state(|e| { e.state = TransferState::Disconnected; }, true).await;
                 self.disconnection().await?;
                 return Err(anyhow!(crate::errors::AppError::NotAnError));
             }
             sharing_nearby::connection_response_frame::Status::Unknown => {
                 error!("Unknown consent type: aborting");
-                self.update_state(
-                    |e| {
-                        e.state = TransferState::Disconnected;
-                    },
-                    true,
-                )
-                .await;
+                self.update_state(|e| { e.state = TransferState::Disconnected; }, true).await;
                 self.disconnection().await?;
                 return Err(anyhow!(crate::errors::AppError::NotAnError));
             }

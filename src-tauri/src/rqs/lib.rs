@@ -108,7 +108,7 @@ impl RQS {
 
         // Define default visibility as per the args inside the new()
         let (visibility_sender, visibility_receiver) = watch::channel(Visibility::Invisible);
-        drop(visibility_sender.send(visibility));
+        _ = visibility_sender.send(visibility);
 
         Self {
             tracker: None,

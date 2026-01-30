@@ -6,6 +6,8 @@
     "dev": "RUST_BACKTRACE=1 tauri dev",
     "build:debug": "tauri build -d",
     "build": "tauri build",
+    "vite:dev": "vite",
+    "vite:build": "vite build",
     "ts-check": "vue-tsc --noEmit",
     "lint": "pnpm exec biome check --write --max-diagnostics=none --reporter=github --formatter-enabled=true --linter-enabled=true --assist-enabled=true"
   },

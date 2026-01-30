@@ -25,8 +25,10 @@ pub use mdns::*;
 mod outbound;
 pub use outbound::*;
 
+use serde::{Deserialize, Serialize};
+
 #[allow(dead_code)]
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum TransferState {
     #[default]
     Initial,

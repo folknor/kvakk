@@ -1,9 +1,7 @@
 name: Build-(Core & Tauri)
 
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
+  workflow_dispatch:  # Manual only (disabled auto-triggers in fork)
 
 # cancel ongoing jobs:
 concurrency:

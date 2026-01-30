@@ -1,7 +1,10 @@
 extern crate prost_build;
 
 fn main() {
-    prost_build::compile_protos(
+    let mut config = prost_build::Config::new();
+    config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
+
+    config.compile_protos(
         &[
             "src/proto_src/device_to_device_messages.proto",
             "src/proto_src/offline_wire_formats.proto",

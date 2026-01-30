@@ -17,7 +17,7 @@ use tokio::net::TcpStream;
 
 use crate::CUSTOM_DOWNLOAD;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub enum DeviceType {
     Unknown = 0,
@@ -39,7 +39,7 @@ impl DeviceType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RemoteDeviceInfo {
     pub name: String,
     pub device_type: DeviceType,

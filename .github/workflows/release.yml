@@ -1,14 +1,11 @@
 name: Create Release
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Manual only (disabled auto-triggers in fork)
     inputs:
       tag_name:
         description: 'Tag Name'
         required: true
-  push:
-    tags:
-      - '*'
 
 jobs:
   build_release:

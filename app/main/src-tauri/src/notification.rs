@@ -2,7 +2,7 @@
 use notify_rust::Notification;
 #[cfg(target_os = "linux")]
 use rqs_lib::{
-    channel::{ChannelAction, ChannelDirection, ChannelMessage},
+    channel::{ChannelMessage, Message, TransferAction},
     Visibility,
 };
 use tauri::AppHandle;
@@ -45,10 +45,8 @@ pub fn send_request_notification(name: String, id: String, app_handle: &AppHandl
                     "accept" => {
                         let _ = cmds::send_to_rs(
                             ChannelMessage {
-                                id,
-                                direction: ChannelDirection::FrontToLib,
-                                action: Some(ChannelAction::AcceptTransfer),
-                                ..Default::default()
+                                id: id.clone(),
+                                msg: Message::Lib { action: TransferAction::ConsentAccept },
                             },
                             capp_handle.state(),
                         );
@@ -57,9 +55,7 @@ pub fn send_request_notification(name: String, id: String, app_handle: &AppHandl
                         let _ = cmds::send_to_rs(
                             ChannelMessage {
                                 id,
-                                direction: ChannelDirection::FrontToLib,
-                                action: Some(ChannelAction::RejectTransfer),
-                                ..Default::default()
+                                msg: Message::Lib { action: TransferAction::ConsentDecline },
                             },
                             capp_handle.state(),
                         );

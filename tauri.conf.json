@@ -40,7 +40,7 @@
     "devUrl": "http://localhost:1420"
   },
   "productName": "rquickshare",
-  "identifier": "dev.mandre.rquickshare",
+  "identifier": "dev.folknor.rquickshare",
   "app": {
     "windows": [
       {

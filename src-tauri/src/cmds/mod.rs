@@ -2,6 +2,8 @@ mod discovery;
 pub use discovery::*;
 mod get_hostname;
 pub use get_hostname::*;
+mod is_ready;
+pub use is_ready::*;
 mod send_payload;
 pub use send_payload::*;
 mod send_to_rs;

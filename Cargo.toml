@@ -1,7 +1,7 @@
 [package]
 name = "rquickshare"
 version = "0.11.5"
-edition = "2021"
+edition = "2024"
 authors = ["martichou"]
 repository = "https://github.com/Martichou/rquickshare"
 license = "AGPL-3.0"
@@ -73,3 +73,37 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[lints.clippy]
+uninlined_format_args = "deny"
+cloned_instead_of_copied = "deny"
+redundant_closure_for_method_calls = "deny"
+semicolon_if_nothing_returned = "deny"
+manual_string_new = "deny"
+explicit_iter_loop = "deny"
+implicit_clone = "deny"
+needless_pass_by_value = "deny"
+unnecessary_sort_by = "deny"
+collapsible_match = "deny"
+if_same_then_else = "deny"
+needless_borrow = "deny"
+ptr_arg = "deny"
+redundant_locals = "deny"
+regex_creation_in_loops = "deny"
+unnecessary_unwrap = "deny"
+wrong_self_convention = "deny"
+let_underscore_must_use = "deny"
+allow_attributes_without_reason = "deny"
+allow_attributes = "deny"
+unwrap_used = "deny"
+unwrap_in_result = "deny"
+ok_expect = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+large_enum_variant = "deny"
+clone_on_ref_ptr = "deny"
+float_cmp = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"

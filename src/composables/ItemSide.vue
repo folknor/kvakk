@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { DisplayedItem } from '../vue_lib';
-import { utils } from '../vue_lib';
-import { PropType } from 'vue';
+import type { PropType } from "vue";
+import { type DisplayedItem, utils } from "../vue_lib";
 
 defineProps({
-	item: {
-		type: Object as PropType<DisplayedItem>,
-		required: true
-	}
+    item: {
+        type: Object as PropType<DisplayedItem>,
+        required: true,
+    },
 });
 </script>
 

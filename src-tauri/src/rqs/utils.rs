@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use anyhow::anyhow;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use bytes::Bytes;
 use get_if_addrs::get_if_addrs;
 use hkdf::Hkdf;
 use num_bigint::{BigUint, ToBigInt};
@@ -135,8 +134,8 @@ pub fn gen_ecdsa_keypair() -> (SecretKey, PublicKey) {
     (secret_key, public_key)
 }
 
-pub fn encode_point(unsigned: Bytes) -> Result<Vec<u8>, anyhow::Error> {
-    let big_int = BigUint::from_bytes_be(&unsigned)
+pub fn encode_point(unsigned: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+    let big_int = BigUint::from_bytes_be(unsigned)
         .to_bigint()
         .ok_or_else(|| anyhow!("Failed to convert to bigint"))?;
 
@@ -152,7 +151,7 @@ pub fn hkdf_extract_expand(
     let hkdf = Hkdf::<Sha256>::new(Some(salt), input);
     let mut okm = vec![0u8; output_len];
     hkdf.expand(info, &mut okm)
-        .map_err(|e| anyhow!("HKDF expand failed: {}", e))?;
+        .map_err(|e| anyhow!("HKDF expand failed: {e}"))?;
     Ok(okm)
 }
 
@@ -183,7 +182,7 @@ pub fn get_download_dir() -> PathBuf {
     match cdown {
         Ok(mg) => {
             if mg.is_some() {
-                return mg.as_ref().unwrap().to_path_buf();
+                return mg.as_ref().unwrap().clone();
             }
         }
         Err(_) => {

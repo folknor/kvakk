@@ -18,5 +18,5 @@ fn main() {
             ],
             &["src-tauri/src/proto_src"],
         )
-        .unwrap();
+        .expect("Failed to compile protobuf files");
 }

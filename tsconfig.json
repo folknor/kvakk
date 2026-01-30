@@ -1,27 +1,45 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM"],
+    "jsx": "preserve",
     "useDefineForClassFields": true,
+
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "preserve",
-    "sourceMap": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+
+    "noEmit": true,
+
     "isolatedModules": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"],
-  "references": [{ "path": "./tsconfig.node.json" }],
-  "exclude": ["node_modules", "dist", "public"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "target"
+  ]
 }

@@ -1,8 +1,6 @@
 import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
-import { resolve } from 'path'
-import AutoImport from 'unplugin-auto-import/vite'
-import { defineConfig } from 'vitest/config'
+import { defineConfig } from 'vite'
 import path from 'path'
 
 // See https://vitejs.dev/config/
@@ -10,15 +8,6 @@ export default defineConfig({
 	plugins: [
 		tailwindcss(),
 		vue(),
-		// See https://github.com/unplugin/unplugin-auto-import
-		AutoImport({
-			imports: ['vue'],
-			dts: './src/auto-imports.d.ts',
-			eslintrc: {
-				enabled: true,
-				filepath: resolve(__dirname, '.eslintrc-auto-import.json'),
-			},
-		}),
 	],
 	resolve: {
 		alias: {
@@ -43,9 +32,5 @@ export default defineConfig({
 		minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
 		sourcemap: !!process.env.TAURI_DEBUG,
 		emptyOutDir: true,
-	},
-	// See https://vitest.dev/config/
-	test: {
-		include: ['tests/unit/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
 	},
 })

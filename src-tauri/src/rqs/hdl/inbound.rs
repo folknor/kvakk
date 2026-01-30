@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use bytes::Bytes;
 use hmac::{Hmac, Mac};
 use libaes::{AES_256_KEY_LEN, Cipher};
 use p256::ecdh::diffie_hellman;
@@ -87,7 +86,7 @@ impl InboundRequest {
                         }
 
                         if let channel::Message::Lib { action } = &channel_msg.msg {
-                            debug!("inbound: got: {:?}", channel_msg);
+                            debug!("inbound: got: {channel_msg:?}");
                             match action {
                                 TransferAction::ConsentAccept => {
                                     self.accept_transfer().await?;
@@ -120,14 +119,14 @@ impl InboundRequest {
 
                     }
                     Err(e) => {
-                        error!("inbound: channel error: {}", e);
+                        error!("inbound: channel error: {e}");
                     }
                 }
             },
             h = stream_read_exact(&mut self.socket, &mut length_buf) => {
                 h?;
 
-                self._handle(length_buf).await?
+                self._handle(length_buf).await?;
             }
         }
 
@@ -281,7 +280,7 @@ impl InboundRequest {
             Ok(uk2ci) => uk2ci,
             Err(e) => {
                 self.send_ukey2_alert(AlertType::BadMessageData).await?;
-                return Err(anyhow!("UKey2: Ukey2ClientInit::decode: {}", e));
+                return Err(anyhow!("UKey2: Ukey2ClientInit::decode: {e}"));
             }
         };
 
@@ -334,8 +333,8 @@ impl InboundRequest {
         let pkey = GenericPublicKey {
             r#type: PublicKeyType::EcP256.into(),
             ec_p256_public_key: Some(EcP256PublicKey {
-                x: encode_point(Bytes::from(x.to_vec()))?,
-                y: encode_point(Bytes::from(y.to_vec()))?,
+                x: encode_point(x)?,
+                y: encode_point(y)?,
             }),
             ..Default::default()
         };
@@ -390,7 +389,7 @@ impl InboundRequest {
         let client_finish = match Ukey2ClientFinished::decode(msg.message_data()) {
             Ok(uk2cf) => uk2cf,
             Err(e) => {
-                return Err(anyhow!("UKey2: Ukey2ClientFinished::decode: {}", e));
+                return Err(anyhow!("UKey2: Ukey2ClientFinished::decode: {e}"));
             }
         };
 
@@ -401,7 +400,7 @@ impl InboundRequest {
         let client_public_key = match GenericPublicKey::decode(client_finish.public_key()) {
             Ok(cpk) => cpk,
             Err(e) => {
-                return Err(anyhow!("UKey2: GenericPublicKey::decode: {}", e));
+                return Err(anyhow!("UKey2: GenericPublicKey::decode: {e}"));
             }
         };
 
@@ -560,7 +559,7 @@ impl InboundRequest {
 
                                 match self.state.text_payload.clone().unwrap() {
                                     TextPayloadInfo::Url(_) => {
-                                        let payload = std::str::from_utf8(&buffer)?.to_owned();
+                                        let payload = std::str::from_utf8(buffer)?.to_owned();
                                         self.update_state(
                                             |e| {
                                                 if let Some(tmd) = e.transfer_metadata.as_mut() {
@@ -573,7 +572,7 @@ impl InboundRequest {
                                         .await;
                                     }
                                     TextPayloadInfo::Text(_) => {
-                                        let payload = std::str::from_utf8(&buffer)?.to_owned();
+                                        let payload = std::str::from_utf8(buffer)?.to_owned();
                                         self.update_state(
                                             |e| {
                                                 if let Some(tmd) = e.transfer_metadata.as_mut() {
@@ -625,7 +624,7 @@ impl InboundRequest {
                                             kind @ SecurityType::UnknownSecurityType => {
                                                 kind.as_str_name().into()
                                             }
-                                            SecurityType::Open => "".into(),
+                                            SecurityType::Open => String::new(),
                                             SecurityType::WpaPsk | SecurityType::Wep => {
                                                 parse_password_payload(buffer)
                                                     .inspect_err(|err| error!("{err:#}"))
@@ -639,7 +638,7 @@ impl InboundRequest {
                                                     tmd.payload = Some(TransferPayload::Wifi {
                                                         ssid,
                                                         password: payload,
-                                                        security_type: security_type,
+                                                        security_type,
                                                     });
                                                 }
                                             },
@@ -673,7 +672,7 @@ impl InboundRequest {
                             .transferred_files
                             .get_mut(&payload_id)
                             .ok_or_else(|| {
-                                anyhow!("File payload ID ({}) is not known", payload_id)
+                                anyhow!("File payload ID ({payload_id}) is not known")
                             })?;
 
                         let current_offset = file_internal.bytes_transferred;
@@ -728,13 +727,13 @@ impl InboundRequest {
                         }
                     }
                     payload_header::PayloadType::Stream => {
-                        error!("Unhandled PayloadType::Stream: {:?}", header.r#type())
+                        error!("Unhandled PayloadType::Stream: {:?}", header.r#type());
                     }
                     payload_header::PayloadType::UnknownPayloadType => {
                         error!(
                             "Invalid PayloadType::UnknownPayloadType: {:?}",
                             header.r#type()
-                        )
+                        );
                     }
                 }
             }
@@ -743,7 +742,7 @@ impl InboundRequest {
                 self.send_keepalive(true).await?;
             }
             _ => {
-                error!("Unhandled offline frame encrypted: {:?}", offline);
+                error!("Unhandled offline frame encrypted: {offline:?}");
             }
         }
 
@@ -874,7 +873,7 @@ impl InboundRequest {
                 let mut dest = get_download_dir();
                 dest.push(file.name());
 
-                info!("Destination: {:?}", dest);
+                info!("Destination: {dest:?}");
                 if dest.exists() {
                     let mut counter = 1;
                     dest.pop();
@@ -912,7 +911,7 @@ impl InboundRequest {
                         counter += 1;
                     }
 
-                    info!("New destination: {:?}", dest);
+                    info!("New destination: {dest:?}");
                 }
 
                 let info = InternalFileInfo {
@@ -938,7 +937,7 @@ impl InboundRequest {
                 ack_bytes: Default::default(),
             };
 
-            info!("Asking for user consent: {:?}", metadata);
+            info!("Asking for user consent: {metadata:?}");
             self.update_state(
                 |e| {
                     e.transfer_metadata = Some(metadata);
@@ -963,7 +962,7 @@ impl InboundRequest {
                         ack_bytes: Default::default(),
                     };
 
-                    info!("Asking for user consent: {:?}", metadata);
+                    info!("Asking for user consent: {metadata:?}");
                     self.update_state(
                         |e| {
                             e.text_payload = Some(TextPayloadInfo::Url(meta.payload_id()));
@@ -987,7 +986,7 @@ impl InboundRequest {
                         ack_bytes: Default::default(),
                     };
 
-                    info!("Asking for user consent: {:?}", metadata);
+                    info!("Asking for user consent: {metadata:?}");
                     self.update_state(
                         |e| {
                             e.text_payload = Some(TextPayloadInfo::Text(meta.payload_id()));
@@ -1065,7 +1064,7 @@ impl InboundRequest {
     }
 
     async fn accept_transfer(&mut self) -> Result<(), anyhow::Error> {
-        let ids: Vec<i64> = self.state.transferred_files.keys().cloned().collect();
+        let ids: Vec<i64> = self.state.transferred_files.keys().copied().collect();
 
         for id in ids {
             let mfi = self.state.transferred_files.get_mut(&id).unwrap();
@@ -1165,14 +1164,14 @@ impl InboundRequest {
 
         let salt_hex = "82AA55A0D397F88346CA1CEE8D3909B95F13FA7DEB1D4AB38376B8256DA85510";
         let salt =
-            hex::decode(salt_hex).map_err(|e| anyhow!("Failed to decode salt_hex: {}", e))?;
+            hex::decode(salt_hex).map_err(|e| anyhow!("Failed to decode salt_hex: {e}"))?;
 
         let d2d_client = hkdf_extract_expand(&salt, &next_secret, "client".as_bytes(), 32)?;
         let d2d_server = hkdf_extract_expand(&salt, &next_secret, "server".as_bytes(), 32)?;
 
         let key_salt_hex = "BF9D2A53C63616D75DB0A7165B91C1EF73E537F2427405FA23610A4BE657642E";
         let key_salt = hex::decode(key_salt_hex)
-            .map_err(|e| anyhow!("Failed to decode key_salt_hex: {}", e))?;
+            .map_err(|e| anyhow!("Failed to decode key_salt_hex: {e}"))?;
 
         let client_key = hkdf_extract_expand(&key_salt, &d2d_client, "ENC:2".as_bytes(), 32)?;
         let client_hmac_key = hkdf_extract_expand(&key_salt, &d2d_client, "SIG:1".as_bytes(), 32)?;

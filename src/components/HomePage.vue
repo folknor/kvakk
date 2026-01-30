@@ -1,13 +1,8 @@
 <template>
-	<div class="flex flex-col w-full h-full bg-green-50 max-w-full max-h-full overflow-hidden">
-		<ToastNotification />
-
+	<div class="flex flex-col w-full h-full bg-green-50 overflow-hidden">
 		<Heading :vm="vm" />
 
-		<div class="flex-1 flex flex-row">
-			<SideMenu :vm="vm" @clear-sending="clearSending(vm)" />
-
-			<div class="flex-1 flex flex-col bg-white w-full max-w-full min-w-0 min-h-full rounded-tl-[3rem] p-12 h-1 overflow-y-scroll">
+		<div class="flex-1 flex flex-col bg-white w-full rounded-t-3xl p-8 overflow-y-auto">
 				<ContentStatus :vm="vm" @outbound-payload="(el: OutboundPayload) => outboundPayload = el" @discovery-running="discoveryRunning = true;" />
 
 				<div
@@ -128,171 +123,201 @@
 				</div>
 			</div>
 		</div>
-	</div>
 </template>
 
 <script lang="ts">
-import { ref, nextTick } from 'vue'
-import { UnlistenFn, listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
-import { getVersion } from '@tauri-apps/api/app';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { open as tauriDialog } from '@tauri-apps/plugin-dialog';
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as tauriDialog } from "@tauri-apps/plugin-dialog";
+import { nextTick, ref } from "vue";
 
-import { ChannelMessage } from '@/bindings/ChannelMessage';
-import { EndpointInfo } from '@/bindings/EndpointInfo';
-import { OutboundPayload } from '@/bindings/OutboundPayload';
+import type { ChannelMessage } from "@/bindings/ChannelMessage";
+import type { EndpointInfo } from "@/bindings/EndpointInfo";
+import type { OutboundPayload } from "@/bindings/OutboundPayload";
+import ContentStatus from "../composables/ContentStatus.vue";
 
-import { ToastNotification, ToDelete, stateToDisplay, DisplayedItem, useToastStore, opt, utils } from '../vue_lib';
-
-import Heading from '../composables/Heading.vue';
-import SideMenu from '../composables/SideMenu.vue';
-import ContentStatus from '../composables/ContentStatus.vue';
-import ItemSide from '../composables/ItemSide.vue';
+import Heading from "../composables/Heading.vue";
+import ItemSide from "../composables/ItemSide.vue";
+import {
+    type DisplayedItem,
+    opt,
+    stateToDisplay,
+    type ToDelete,
+    utils,
+} from "../vue_lib";
 
 export default {
-	name: "HomePage",
+    name: "HomePage",
 
-	components: {
-		ToastNotification,
-		Heading,
-		SideMenu,
-		ContentStatus,
-		ItemSide
-	},
+    components: {
+        Heading,
+        ContentStatus,
+        ItemSide,
+    },
 
-	async setup() {
-		const toastStore = useToastStore();
-		const dialogOpen = tauriDialog;
+    setup(): {
+        stateToDisplay: typeof stateToDisplay;
+        invoke: typeof invoke;
+        dialogOpen: typeof tauriDialog;
+        _displayedItems: typeof utils._displayedItems;
+        clearSending: typeof utils.clearSending;
+        removeRequest: typeof utils.removeRequest;
+        sendInfo: typeof utils.sendInfo;
+        sendCmd: typeof utils.sendCmd;
+        blured: typeof utils.blured;
+        getProgress: typeof utils.getProgress;
+    } {
+        const dialogOpen = tauriDialog;
 
-		return {
-			stateToDisplay,
-			toastStore,
-			invoke,
-			getVersion,
-			dialogOpen,
-			...utils
-		};
-	},
+        return {
+            stateToDisplay,
+            invoke,
+            dialogOpen,
+            ...utils,
+        };
+    },
 
-	data() {
-		return {
-			isAppInForeground: false,
-			discoveryRunning: ref(false),
-			isDragHovering: ref(false),
+    data(): {
+        isAppInForeground: boolean;
+        discoveryRunning: boolean;
+        isDragHovering: boolean;
+        requests: ChannelMessage[];
+        endpointsInfo: EndpointInfo[];
+        toDelete: ToDelete[];
+        outboundPayload: OutboundPayload | undefined;
+        cleanupInterval: NodeJS.Timeout | null;
+        unlisten: UnlistenFn[];
+        hostname: string | undefined;
+        backendReady: boolean;
+    } {
+        return {
+            isAppInForeground: false,
+            discoveryRunning: ref(false) as unknown as boolean,
+            isDragHovering: ref(false) as unknown as boolean,
 
-			requests: ref<ChannelMessage[]>([]),
-			endpointsInfo: ref<EndpointInfo[]>([]),
-			toDelete: ref<ToDelete[]>([]),
-			outboundPayload: ref<OutboundPayload | undefined>(),
+            requests: ref<ChannelMessage[]>([]) as unknown as ChannelMessage[],
+            endpointsInfo: ref<EndpointInfo[]>([]) as unknown as EndpointInfo[],
+            toDelete: ref<ToDelete[]>([]) as unknown as ToDelete[],
+            outboundPayload: ref<OutboundPayload | undefined>() as unknown as
+                | OutboundPayload
+                | undefined,
 
-			// eslint-disable-next-line no-undef
-			cleanupInterval: opt<NodeJS.Timeout>(),
-			unlisten: Array<UnlistenFn>(),
+            cleanupInterval: opt<NodeJS.Timeout>(),
+            unlisten: [] as UnlistenFn[],
 
-			version: opt<string>(),
-			hostname: ref<string>(),
-			new_version: opt<string>(),
-		};
-	},
+            hostname: ref<string>() as unknown as string | undefined,
+            backendReady: ref(false) as unknown as boolean,
+        };
+    },
 
-	mounted: function () {
-		nextTick(async () => {
-			this.hostname = await invoke('get_hostname');
-			this.version = await getVersion();
+    mounted(): void {
+        void nextTick(async () => {
+            this.hostname = (await invoke("get_hostname")) as string;
 
-			this.unlisten.push(
-				await listen('rs2js_channelmessage', async (event) => {
-					const cm = event.payload as ChannelMessage;
-					const idx = this.requests.findIndex((el) => el.id === cm.id);
+            this.unlisten.push(
+                await listen("rs2js_channelmessage", (event) => {
+                    const cm = event.payload as ChannelMessage;
+                    const idx = this.requests.findIndex(
+                        (el) => el.id === cm.id,
+                    );
 
-					if (cm.state === "Disconnected") {
-						this.toDelete.push({
-							id: cm.id,
-							triggered: new Date().getTime()
-						});
-					}
+                    if (cm.state === "Disconnected") {
+                        this.toDelete.push({
+                            id: cm.id,
+                            triggered: Date.now(),
+                        });
+                    }
 
-					if (idx !== -1) {
-						const prev = this.requests.at(idx);
-						// Update the existing message at index 'idx'
-						this.requests.splice(idx, 1, {
-							...cm,
-							state: cm.state ?? prev!.state,
-							meta: cm.meta ?? prev!.meta,
-						});
-					} else {
-						// Push the new message if not found
-						this.requests.push(cm);
-					}
+                    if (idx !== -1) {
+                        const prev = this.requests[idx];
+                        if (prev) {
+                            this.requests.splice(idx, 1, {
+                                ...cm,
+                                state: cm.state ?? prev.state,
+                                meta: cm.meta ?? prev.meta,
+                            });
+                        }
+                    } else {
+                        this.requests.push(cm);
+                    }
+                }),
+            );
 
-					return;
-				})
-			);
+            this.unlisten.push(
+                await listen("rs2js_endpointinfo", (event) => {
+                    const ei = event.payload as EndpointInfo;
+                    const idx = this.endpointsInfo.findIndex(
+                        (el) => el.id === ei.id,
+                    );
 
-			this.unlisten.push(
-				await listen('rs2js_endpointinfo', (event) => {
-					const ei = event.payload as EndpointInfo;
-					const idx = this.endpointsInfo.findIndex((el) => el.id === ei.id);
+                    if (!ei.present) {
+                        if (idx !== -1) {
+                            this.endpointsInfo.splice(idx, 1);
+                        }
 
-					if (!ei.present) {
-						if (idx !== -1) {
-							this.endpointsInfo.splice(idx, 1);
-						}
+                        return;
+                    }
 
-						return;
-					}
+                    if (idx !== -1) {
+                        this.endpointsInfo.splice(idx, 1, ei);
+                    } else {
+                        this.endpointsInfo.push(ei);
+                    }
+                }),
+            );
 
-					if (idx !== -1) {
-						this.endpointsInfo.splice(idx, 1, ei);
-					} else {
-						this.endpointsInfo.push(ei);
-					}
-				})
-			);
+            this.unlisten.push(
+                await getCurrentWindow().onDragDropEvent(async (event) => {
+                    if (event.payload.type === "over") {
+                        this.isDragHovering = true;
+                    } else if (event.payload.type === "drop") {
+                        this.isDragHovering = false;
+                        this.outboundPayload = {
+                            Files: event.payload.paths,
+                        } as OutboundPayload;
+                        if (!this.discoveryRunning) {
+                            await invoke("start_discovery");
+                        }
+                        this.discoveryRunning = true;
+                    } else {
+                        this.isDragHovering = false;
+                    }
+                }),
+            );
 
-			this.unlisten.push(
-				await getCurrentWindow().onDragDropEvent(async (event) => {
-					if (event.payload.type === 'over') {
-						this.isDragHovering = true;
-					} else if (event.payload.type === 'drop') {
-						console.log("Dropped");
-						this.isDragHovering = false;
-						this.outboundPayload = {
-							Files: event.payload.paths
-						} as OutboundPayload;
-						if (!this.discoveryRunning) await invoke('start_discovery');
-						this.discoveryRunning = true;
-					} else {
-						this.isDragHovering = false;
-					}
-				})
-			);
+            this.backendReady = (await invoke("is_ready")) as boolean;
 
-			await this.getLatestVersion(this);
-		});
-	},
+            this.unlisten.push(
+                await listen("backend_ready", () => {
+                    this.backendReady = true;
+                }),
+            );
+        });
+    },
 
-	unmounted: function() {
-		this.unlisten.forEach((el) => el());
+    unmounted(): void {
+        for (const fn of this.unlisten) {
+            fn();
+        }
 
-		if (this.cleanupInterval && this.cleanupInterval[Symbol.dispose]) {
-			this.cleanupInterval[Symbol.dispose]();
-		}
-	},
+        if (this.cleanupInterval?.[Symbol.dispose]) {
+            this.cleanupInterval[Symbol.dispose]();
+        }
+    },
 
-	computed: {
-		vm() {
-			return this;
-		},
-		displayedIsEmpty(): boolean {
-			return this.displayedItems.length == 0
-		},
-		displayedItems(): Array<DisplayedItem> {
-			return this._displayedItems(this);
-		}
-	},
+    computed: {
+        vm(): this {
+            return this;
+        },
+        displayedIsEmpty(): boolean {
+            return this.displayedItems.length === 0;
+        },
+        displayedItems(): Array<DisplayedItem> {
+            return this._displayedItems(this);
+        },
+    },
 
-	methods: {},
-}
+    methods: {},
+};
 </script>

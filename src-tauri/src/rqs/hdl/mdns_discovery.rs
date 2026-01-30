@@ -92,18 +92,18 @@ impl MDnsDiscovery {
                                             rtype: Some(dt),
                                             present: Some(true),
                                         };
-                                        info!("ServiceResolved: Resolved a new service: {:?}", ei);
+                                        info!("ServiceResolved: Resolved a new service: {ei:?}");
                                         cache.insert(fullname.clone(), ei.clone());
                                         let _ = self.sender.send(ei);
                                     }
                                 }
                                 ServiceEvent::ServiceRemoved(_, fullname) => {
-                                    trace!("ServiceRemoved: checking if should remove {}", fullname);
+                                    trace!("ServiceRemoved: checking if should remove {fullname}");
                                     // Only remove if it has not been seen in the last cleanup_threshold
                                     let should_remove = cache.get(&fullname).map(|ei| ei.id.clone());
 
                                     if let Some(id) = should_remove {
-                                        info!("ServiceRemoved: Remove a previous service: {}", fullname);
+                                        info!("ServiceRemoved: Remove a previous service: {fullname}");
                                         cache.remove(&fullname);
                                         let _ = self.sender.send(EndpointInfo {
                                             id,
@@ -115,7 +115,7 @@ impl MDnsDiscovery {
                                 _ => {}
                             }
                         },
-                        Err(err) => error!("MDnsDiscovery: error: {}", err),
+                        Err(err) => error!("MDnsDiscovery: error: {err}"),
                     }
                 }
             }

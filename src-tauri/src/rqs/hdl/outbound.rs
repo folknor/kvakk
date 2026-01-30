@@ -6,7 +6,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use bytes::Bytes;
 use hmac::{Hmac, Mac};
 use libaes::{AES_256_KEY_LEN, Cipher};
 use p256::ecdh::diffie_hellman;
@@ -92,7 +91,7 @@ impl OutboundRequest {
                 transfer_metadata: Some(TransferMetadata {
                     source: Some(rdi),
                     payload_kind: TransferPayloadKind::Files,
-                    payload: Some(TransferPayload::Files(files.to_vec())),
+                    payload: Some(TransferPayload::Files(files.clone())),
                     id: Default::default(),
                     pin_code: Default::default(),
                     payload_preview: Default::default(),
@@ -120,31 +119,28 @@ impl OutboundRequest {
                         }
 
                         if let channel::Message::Lib { action }  = &channel_msg.msg {
-                            debug!("outbound: got: {:?}", channel_msg);
-                            match action {
-                                TransferAction::TransferCancel => {
-                                    self.update_state(
-                                        |e| {
-                                            e.state = TransferState::Cancelled;
-                                        },
-                                        true,
-                                    ).await;
-                                    self.disconnection().await?;
-                                    return Err(anyhow!(crate::errors::AppError::NotAnError));
-                                },
-                                _ => {}
+                            debug!("outbound: got: {channel_msg:?}");
+                            if action == &TransferAction::TransferCancel {
+                                self.update_state(
+                                    |e| {
+                                        e.state = TransferState::Cancelled;
+                                    },
+                                    true,
+                                ).await;
+                                self.disconnection().await?;
+                                return Err(anyhow!(crate::errors::AppError::NotAnError));
                             }
                         }
                     }
                     Err(e) => {
-                        error!("inbound: channel error: {}", e);
+                        error!("inbound: channel error: {e}");
                     }
                 }
             },
             h = stream_read_exact(&mut self.socket, &mut length_buf) => {
                 h?;
 
-                self._handle(length_buf).await?
+                self._handle(length_buf).await?;
             }
         }
 
@@ -227,7 +223,7 @@ impl OutboundRequest {
                     endpoint_name: Some(device_name.clone().into()),
                     endpoint_info: Some(
                         RemoteDeviceInfo {
-                            name: device_name.clone().into(),
+                            name: device_name.clone(),
                             device_type: DeviceType::Laptop,
                         }
                         .serialize(),
@@ -254,8 +250,8 @@ impl OutboundRequest {
         let pkey = GenericPublicKey {
             r#type: PublicKeyType::EcP256.into(),
             ec_p256_public_key: Some(EcP256PublicKey {
-                x: encode_point(Bytes::from(x.to_vec()))?,
-                y: encode_point(Bytes::from(y.to_vec()))?,
+                x: encode_point(x)?,
+                y: encode_point(y)?,
             }),
             ..Default::default()
         };
@@ -316,7 +312,7 @@ impl OutboundRequest {
         let server_init = match Ukey2ServerInit::decode(msg.message_data()) {
             Ok(uk2si) => uk2si,
             Err(e) => {
-                return Err(anyhow!("UKey2: Ukey2ClientFinished::decode: {}", e));
+                return Err(anyhow!("UKey2: Ukey2ClientFinished::decode: {e}"));
             }
         };
 
@@ -338,7 +334,7 @@ impl OutboundRequest {
         let server_public_key = match GenericPublicKey::decode(server_init.public_key()) {
             Ok(spk) => spk,
             Err(e) => {
-                return Err(anyhow!("UKey2: GenericPublicKey::decode: {}", e));
+                return Err(anyhow!("UKey2: GenericPublicKey::decode: {e}"));
             }
         };
 
@@ -506,16 +502,16 @@ impl OutboundRequest {
                         }
                     }
                     payload_header::PayloadType::File => {
-                        error!("Unhandled PayloadType::File: {:?}", header.r#type())
+                        error!("Unhandled PayloadType::File: {:?}", header.r#type());
                     }
                     payload_header::PayloadType::Stream => {
-                        error!("Unhandled PayloadType::Stream: {:?}", header.r#type())
+                        error!("Unhandled PayloadType::Stream: {:?}", header.r#type());
                     }
                     payload_header::PayloadType::UnknownPayloadType => {
                         error!(
                             "Invalid PayloadType::UnknownPayloadType: {:?}",
                             header.r#type()
-                        )
+                        );
                     }
                 }
             }
@@ -524,7 +520,7 @@ impl OutboundRequest {
                 self.send_keepalive(true).await?;
             }
             _ => {
-                error!("Unhandled offline frame encrypted: {:?}", offline);
+                error!("Unhandled offline frame encrypted: {offline:?}");
             }
         }
 
@@ -633,21 +629,21 @@ impl OutboundRequest {
                 for f in files {
                     let path = Path::new(f);
                     if !path.is_file() {
-                        warn!("Path is not a file: {}", f);
+                        warn!("Path is not a file: {f}");
                         continue;
                     }
 
                     let file = match File::open(f) {
                         Ok(_f) => _f,
                         Err(e) => {
-                            error!("Failed to open file: {f}: {:?}", e);
+                            error!("Failed to open file: {f}: {e:?}");
                             continue;
                         }
                     };
                     let fmetadata = match file.metadata() {
                         Ok(_fm) => _fm,
                         Err(e) => {
-                            error!("Failed to get metadata for: {f}: {:?}", e);
+                            error!("Failed to get metadata for: {f}: {e:?}");
                             continue;
                         }
                     };
@@ -668,7 +664,7 @@ impl OutboundRequest {
                         file_metadata::Type::Unknown
                     };
 
-                    info!("File type to send: {}", ftype);
+                    info!("File type to send: {ftype}");
                     let fname = path
                         .file_name()
                         .ok_or_else(|| anyhow!("Failed to get file_name for {f}"))?;
@@ -746,8 +742,8 @@ impl OutboundRequest {
                 .await;
 
                 // TODO - Handle sending Text
-                let ids: Vec<i64> = self.state.transferred_files.keys().cloned().collect();
-                info!("We are sending: {:?}", ids);
+                let ids: Vec<i64> = self.state.transferred_files.keys().copied().collect();
+                info!("We are sending: {ids:?}");
                 let mut ids_iter = ids.into_iter();
 
                 // Loop through all files
@@ -779,20 +775,17 @@ impl OutboundRequest {
                                 if channel_msg.id == self.state.id {
                                     // TODO: if-let chains will be available in 1.88
                                     if let channel::Message::Lib { action } = &channel_msg.msg {
-                                        debug!("outbound: got: {:?}", channel_msg);
-                                        match action {
-                                            TransferAction::TransferCancel => {
-                                                self.update_state(
-                                                    |e| {
-                                                        e.state = TransferState::Cancelled;
-                                                    },
-                                                    true,
-                                                )
-                                                .await;
-                                                self.disconnection().await?;
-                                                break 'send_all_files;
-                                            }
-                                            _ => {}
+                                        debug!("outbound: got: {channel_msg:?}");
+                                        if action == &TransferAction::TransferCancel {
+                                            self.update_state(
+                                                |e| {
+                                                    e.state = TransferState::Cancelled;
+                                                },
+                                                true,
+                                            )
+                                            .await;
+                                            self.disconnection().await?;
+                                            break 'send_all_files;
                                         }
                                     }
                                 }
@@ -801,7 +794,7 @@ impl OutboundRequest {
                                 match e {
                                     TryRecvError::Empty => {}
                                     e => {
-                                        error!("inbound: channel error: {}", e)
+                                        error!("inbound: channel error: {e}");
                                     }
                                 };
                             }
@@ -1034,14 +1027,14 @@ impl OutboundRequest {
 
         let salt_hex = "82AA55A0D397F88346CA1CEE8D3909B95F13FA7DEB1D4AB38376B8256DA85510";
         let salt =
-            hex::decode(salt_hex).map_err(|e| anyhow!("Failed to decode salt_hex: {}", e))?;
+            hex::decode(salt_hex).map_err(|e| anyhow!("Failed to decode salt_hex: {e}"))?;
 
         let d2d_client = hkdf_extract_expand(&salt, &next_secret, "client".as_bytes(), 32)?;
         let d2d_server = hkdf_extract_expand(&salt, &next_secret, "server".as_bytes(), 32)?;
 
         let key_salt_hex = "BF9D2A53C63616D75DB0A7165B91C1EF73E537F2427405FA23610A4BE657642E";
         let key_salt = hex::decode(key_salt_hex)
-            .map_err(|e| anyhow!("Failed to decode key_salt_hex: {}", e))?;
+            .map_err(|e| anyhow!("Failed to decode key_salt_hex: {e}"))?;
 
         let client_key = hkdf_extract_expand(&key_salt, &d2d_client, "ENC:2".as_bytes(), 32)?;
         let client_hmac_key = hkdf_extract_expand(&key_salt, &d2d_client, "SIG:1".as_bytes(), 32)?;

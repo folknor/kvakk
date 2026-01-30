@@ -1,58 +1,62 @@
 <script setup lang="ts">
-import { OutboundPayload } from '@/bindings/OutboundPayload';
-import { TauriVM } from '../vue_lib/helper/ParamsHelper';
-import { PropType } from 'vue';
+import type { PropType } from "vue";
+import type { OutboundPayload } from "@/bindings/OutboundPayload";
+import type { TauriVM } from "../vue_lib/helper/ParamsHelper";
 
-const props = defineProps({
-	vm: {
-		type: Object as PropType<TauriVM>,
-		required: true
-	}
+const props: { vm: TauriVM } = defineProps({
+    vm: {
+        type: Object as PropType<TauriVM>,
+        required: true,
+    },
 });
 
-const emits = defineEmits(['outboundPayload', 'discoveryRunning']);
+const emits: {
+    (e: "outboundPayload", payload: OutboundPayload): void;
+    (e: "discoveryRunning"): void;
+} = defineEmits(["outboundPayload", "discoveryRunning"]);
 
-function openFilePicker() {
-	props.vm.dialogOpen({
-		title: "Select a file to send",
-		directory: false,
-		multiple: true,
-	}).then(async (el) => {
-		let elem;
-		if (el === null) {
-			return;
-		}
+async function openFilePicker(): Promise<void> {
+    const el = await props.vm.dialogOpen({
+        title: "Select a file to send",
+        directory: false,
+        multiple: true,
+    });
 
-		if (el instanceof Array) {
-			if (el.length > 0 && Object.hasOwn(el[0], 'path')) {
-				elem = el.map((e) => e.path);
-			} else {
-				elem = el;
-			}
-		} else {
-			elem = [el];
-		}
+    if (el === null) {
+        return;
+    }
 
-		emits('outboundPayload', {
-			Files: elem
-		} as OutboundPayload);
-		if (!props.vm.discoveryRunning) await props.vm.invoke('start_discovery');
-		emits('discoveryRunning');
-	})
+    let elem: string[];
+    if (Array.isArray(el)) {
+        if (
+            el.length > 0 &&
+            typeof el[0] === "object" &&
+            el[0] !== null &&
+            Object.hasOwn(el[0], "path")
+        ) {
+            elem = el.map((e) => (e as { path: string }).path);
+        } else {
+            elem = el as string[];
+        }
+    } else {
+        elem = [el as string];
+    }
+
+    emits("outboundPayload", {
+        Files: elem,
+    } as OutboundPayload);
+    if (!props.vm.discoveryRunning) {
+        await props.vm.invoke("start_discovery");
+    }
+    emits("discoveryRunning");
 }
 </script>
 
 <template>
 	<h3 class="mb-4 font-medium text-xl">
-		<span v-if="props.vm.displayedIsEmpty">Ready to receive{{ props.vm.outboundPayload != undefined ? ' / send' : '' }}</span>
+		<span v-if="props.vm.displayedIsEmpty">Ready to receive{{ props.vm.outboundPayload !== undefined ? ' / send' : '' }}</span>
 		<span v-else>Nearby devices</span>
 	</h3>
-
-	<div v-if="props.vm.displayedIsEmpty && props.vm.endpointsInfo.length === 0" class="m-auto status-indicator status-indicator--success status-indicator--xl">
-		<div class="circle circle--animated circle-main" />
-		<div class="circle circle--animated circle-secondary" />
-		<div class="circle circle--animated circle-tertiary" />
-	</div>
 
 	<div
 		v-if="props.vm.displayedIsEmpty && props.vm.outboundPayload === undefined" class="w-full border

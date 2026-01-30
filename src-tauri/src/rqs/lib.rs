@@ -132,13 +132,11 @@ impl RQS {
 
         let endpoint_id: Vec<u8> = rand::rng()
             .sample_iter(Alphanumeric)
-            .take(4)
-            .map(u8::from)
-            .collect();
+            .take(4).collect();
         let tcp_listener =
             TcpListener::bind(format!("0.0.0.0:{}", self.port_number.unwrap_or(0))).await?;
         let binded_addr = tcp_listener.local_addr()?;
-        info!("TcpListener on: {}", binded_addr);
+        info!("TcpListener on: {binded_addr}");
 
         // So the random port can be accessed from the user if needed.
         // This does have a difference in behaviour however when port_number is Some.
@@ -161,7 +159,7 @@ impl RQS {
         {
             if let Ok(ble) = BleListener::new(self.ble_sender.clone())
                 .await
-                .inspect_err(|err| warn!("BleListener: {}", err))
+                .inspect_err(|err| warn!("BleListener: {err}"))
             {
                 let ctk = ctoken.clone();
                 tracker.spawn(async move { ble.run(ctk).await });
@@ -203,13 +201,13 @@ impl RQS {
                 let blea = match BleAdvertiser::new().await {
                     Ok(b) => b,
                     Err(e) => {
-                        error!("Couldn't init BleAdvertiser: {}", e);
+                        error!("Couldn't init BleAdvertiser: {e}");
                         return;
                     }
                 };
 
                 if let Err(e) = blea.run(ctk_blea).await {
-                    error!("Couldn't start BleAdvertiser: {}", e);
+                    error!("Couldn't start BleAdvertiser: {e}");
                 }
             });
         }
@@ -256,7 +254,7 @@ impl RQS {
 
     // Setting None here will resume the default settings
     pub fn set_download_path(&self, p: Option<PathBuf>) {
-        debug!("Setting the download path to {:?}", p);
+        debug!("Setting the download path to {p:?}");
         let mut guard = CUSTOM_DOWNLOAD.write().unwrap();
         *guard = p;
     }
@@ -266,7 +264,7 @@ impl RQS {
     ///
     /// So only do this when no data transfer is going on.
     pub fn set_device_name(&self, name: String) {
-        debug!("Setting the device name {:?}", name);
+        debug!("Setting the device name {name:?}");
         let mut guard = DEVICE_NAME.write().unwrap();
         *guard = name;
     }

@@ -9,7 +9,7 @@ pub async fn start_discovery(state: tauri::State<'_, AppState>) -> Result<(), St
         .lock()
         .await
         .discovery(state.dch_sender.clone())
-        .map_err(|e| format!("unable to start discovery: {}", e))
+        .map_err(|e| format!("unable to start discovery: {e}"))
 }
 
 #[tauri::command]

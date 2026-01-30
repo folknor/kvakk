@@ -39,6 +39,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            cmds::is_ready,
             cmds::start_discovery,
             cmds::stop_discovery,
             cmds::get_hostname,
@@ -85,7 +86,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         let _ = app_handle.emit("backend_ready", ());
                     }
                     Err(e) => {
-                        error!("Failed to start RQS: {}", e);
+                        error!("Failed to start RQS: {e}");
                         let _ = app_handle.emit("backend_error", e.to_string());
                     }
                 }
@@ -124,7 +125,7 @@ fn spawn_receiver_tasks(app_handle: &AppHandle) {
             let rinfo = receiver.recv().await;
 
             match rinfo {
-                Ok(info) => {
+                Ok(ref info) => {
                     rs2js_channelmessage(info, &capp_handle);
                 }
                 Err(e) => {
@@ -143,7 +144,7 @@ fn spawn_receiver_tasks(app_handle: &AppHandle) {
             let rinfo = dch_receiver.recv().await;
 
             match rinfo {
-                Ok(info) => rs2js_endpointinfo(info, &capp_handle),
+                Ok(ref info) => rs2js_endpointinfo(info, &capp_handle),
                 Err(e) => {
                     error!("RecvError: dch_sender: {e}");
                 }
@@ -159,19 +160,19 @@ fn handle_window_event(w: &Window, event: &WindowEvent) {
     }
 }
 
-fn rs2js_channelmessage(message: ChannelMessage, manager: &AppHandle) {
+fn rs2js_channelmessage(message: &ChannelMessage, manager: &AppHandle) {
     // Only forward client messages to the frontend
     if matches!(message.msg, Message::Lib { .. }) {
         return;
     }
 
-    info!("rs2js_channelmessage: {:?}", &message);
-    manager.emit("rs2js_channelmessage", &message).unwrap();
+    info!("rs2js_channelmessage: {message:?}");
+    manager.emit("rs2js_channelmessage", message).unwrap();
 }
 
-fn rs2js_endpointinfo(message: EndpointInfo, manager: &AppHandle) {
-    info!("rs2js_endpointinfo: {:?}", &message);
-    manager.emit("rs2js_endpointinfo", &message).unwrap();
+fn rs2js_endpointinfo(message: &EndpointInfo, manager: &AppHandle) {
+    info!("rs2js_endpointinfo: {message:?}");
+    manager.emit("rs2js_endpointinfo", message).unwrap();
 }
 
 fn open_main_window(app_handle: &AppHandle) {

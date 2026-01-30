@@ -57,7 +57,8 @@ impl RemoteDeviceInfo {
         if name_chars.len() > 255 {
             name_chars.truncate(255);
         }
-        endpoint_info.push(name_chars.len() as u8);
+        // Safety: truncated to max 255 above
+        endpoint_info.push(u8::try_from(name_chars.len()).unwrap_or(255));
         endpoint_info.extend(name_chars);
 
         endpoint_info
@@ -91,9 +92,9 @@ pub fn gen_mdns_endpoint_info(device_type: u8, device_name: &str) -> String {
     let unknown_bytes = rand::rng().random::<[u8; 16]>();
     record.extend_from_slice(&unknown_bytes);
 
-    let device_name = device_name.as_bytes();
-    let length = device_name.len() as u8;
-    record.push(length);
+    let device_name = &device_name.as_bytes()[..device_name.len().min(255)];
+    // Safety: clamped to max 255 above
+    record.push(u8::try_from(device_name.len()).unwrap_or(255));
     record.extend_from_slice(device_name);
 
     URL_SAFE_NO_PAD.encode(&record)

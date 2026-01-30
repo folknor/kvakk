@@ -1174,18 +1174,10 @@ impl OutboundRequest {
     }
 
     async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), anyhow::Error> {
-        let length = data.len();
+        let length: u32 = data.len().try_into().map_err(|_| anyhow!("Frame too large"))?;
 
-        // Prepare length prefix in big-endian format
-        let length_bytes = [
-            (length >> 24) as u8,
-            (length >> 16) as u8,
-            (length >> 8) as u8,
-            length as u8,
-        ];
-
-        let mut prefixed_length = Vec::with_capacity(length + 4);
-        prefixed_length.extend_from_slice(&length_bytes);
+        let mut prefixed_length = Vec::with_capacity(data.len() + 4);
+        prefixed_length.extend_from_slice(&length.to_be_bytes());
         prefixed_length.extend_from_slice(&data);
 
         self.socket.write_all(&prefixed_length).await?;

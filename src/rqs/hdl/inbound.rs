@@ -664,7 +664,8 @@ impl InboundRequest {
             if self.state.transferred_files.is_empty() {
                 info!("All files received, transfer finished");
                 self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
-                // Don't disconnect - wait for sender to request safe disconnect
+                // Receiver must initiate disconnect - Android waits for this
+                self.request_disconnection().await?;
             }
         }
 
@@ -1231,6 +1232,31 @@ impl InboundRequest {
                 ),
                 disconnection: Some(location_nearby_connections::DisconnectionFrame {
                     ack_safe_to_disconnect: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+
+        if self.state.encryption_done {
+            self.encrypt_and_send(&frame).await
+        } else {
+            self.send_frame(frame.encode_to_vec()).await
+        }
+    }
+
+    /// Request disconnection (sends request_safe_to_disconnect: true)
+    /// Android expects the receiver to initiate disconnect after receiving all files.
+    async fn request_disconnection(&mut self) -> Result<(), anyhow::Error> {
+        debug!("Sending request_safe_to_disconnect");
+        let frame = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    request_safe_to_disconnect: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()

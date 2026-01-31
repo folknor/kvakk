@@ -114,8 +114,10 @@ impl TcpServer {
                                                             metadata: Default::default()
                                                         }),
                                                     }));
+                                                    error!("{INNER_NAME}: error while handling client: {e} ({:?})", ir.state.state);
+                                                } else {
+                                                    debug!("{INNER_NAME}: connection closed after transfer complete");
                                                 }
-                                                error!("{INNER_NAME}: error while handling client: {e} ({:?})", ir.state.state);
                                                 break;
                                             }
                                         },

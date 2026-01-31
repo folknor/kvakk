@@ -1,9 +1,7 @@
 [package]
-name = "rquickshare"
-version = "0.11.5"
+name = "kvakk"
+version = "0.1.0"
 edition = "2024"
-authors = ["martichou"]
-repository = "https://github.com/Martichou/rquickshare"
 license = "AGPL-3.0"
 
 [lib]
@@ -11,12 +9,8 @@ name = "rqs"
 path = "src/rqs/lib.rs"
 
 [[bin]]
-name = "rquickshare"
+name = "kvakk"
 path = "src/main.rs"
-
-[[bin]]
-name = "rqs-debug"
-path = "src/bin/rqs_debug.rs"
 
 [build-dependencies]
 prost-build = "0.14"

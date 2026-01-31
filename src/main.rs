@@ -1,4 +1,4 @@
-//! RQuickShare - egui frontend
+//! Kvakk - Quick Share for Linux
 
 use std::sync::mpsc;
 use std::thread;
@@ -41,11 +41,11 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "RQuickShare",
+        "Kvakk",
         options,
         Box::new(|cc| {
             catppuccin_egui::set_theme(&cc.egui_ctx, catppuccin_egui::MOCHA);
-            Ok(Box::new(RQuickShareApp::new(cc)))
+            Ok(Box::new(KvakkApp::new(cc)))
         }),
     )
 }
@@ -77,7 +77,7 @@ struct InboundTransfer {
     state: TransferState,
 }
 
-struct RQuickShareApp {
+struct KvakkApp {
     device_name: String,
     rx: mpsc::Receiver<GuiMessage>,
     cmd_tx: Option<broadcast::Sender<ChannelMessage>>,
@@ -88,7 +88,7 @@ struct RQuickShareApp {
     inbound: Option<InboundTransfer>,
 }
 
-impl RQuickShareApp {
+impl KvakkApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = mpsc::channel();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<(
@@ -341,7 +341,7 @@ impl RQuickShareApp {
     }
 }
 
-impl eframe::App for RQuickShareApp {
+impl eframe::App for KvakkApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_messages();
 
@@ -382,7 +382,7 @@ impl eframe::App for RQuickShareApp {
     }
 }
 
-impl RQuickShareApp {
+impl KvakkApp {
     fn draw_device_grid(&mut self, ui: &mut egui::Ui) {
         if self.endpoints.is_empty() {
             ui.vertical_centered(|ui| {

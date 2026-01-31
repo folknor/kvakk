@@ -26,7 +26,7 @@ use crate::CUSTOM_DOWNLOAD;
 /// Persistent endpoint ID - loaded from data dir or generated once and saved
 static ENDPOINT_ID: LazyLock<[u8; 4]> = LazyLock::new(|| {
     // Try to load from data directory
-    if let Some(proj_dirs) = ProjectDirs::from("", "", "rquickshare") {
+    if let Some(proj_dirs) = ProjectDirs::from("", "", "kvakk") {
         let data_dir = proj_dirs.data_dir();
         let endpoint_file = data_dir.join("endpoint_id");
 

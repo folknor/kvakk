@@ -202,7 +202,8 @@ impl InboundRequest {
             | TransferState::SentPairedKeyResult
             | TransferState::ReceivedPairedKeyResult
             | TransferState::WaitingForUserConsent
-            | TransferState::ReceivingFiles => {
+            | TransferState::ReceivingFiles
+            | TransferState::Finished => {
                 debug!("Handling SecureMessage frame in state {:?}", current_state.state);
                 let smsg = SecureMessage::decode(&*frame_data)?;
                 self.decrypt_and_process_secure_message(&smsg).await?;

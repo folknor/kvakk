@@ -141,8 +141,12 @@ import Heading from "../composables/Heading.vue";
 import ItemSide from "../composables/ItemSide.vue";
 import {
     type DisplayedItem,
+    mergeNormalizedRequest,
+    type NormalizedRequest,
+    normalizeChannelMessage,
     opt,
     stateToDisplay,
+    type TauriVM,
     type ToDelete,
     utils,
 } from "../vue_lib";
@@ -182,7 +186,7 @@ export default {
         isAppInForeground: boolean;
         discoveryRunning: boolean;
         isDragHovering: boolean;
-        requests: ChannelMessage[];
+        requests: NormalizedRequest[];
         endpointsInfo: EndpointInfo[];
         toDelete: ToDelete[];
         outboundPayload: OutboundPayload | undefined;
@@ -196,7 +200,9 @@ export default {
             discoveryRunning: ref(false) as unknown as boolean,
             isDragHovering: ref(false) as unknown as boolean,
 
-            requests: ref<ChannelMessage[]>([]) as unknown as ChannelMessage[],
+            requests: ref<NormalizedRequest[]>(
+                [],
+            ) as unknown as NormalizedRequest[],
             endpointsInfo: ref<EndpointInfo[]>([]) as unknown as EndpointInfo[],
             toDelete: ref<ToDelete[]>([]) as unknown as ToDelete[],
             outboundPayload: ref<OutboundPayload | undefined>() as unknown as
@@ -218,11 +224,12 @@ export default {
             this.unlisten.push(
                 await listen("rs2js_channelmessage", (event) => {
                     const cm = event.payload as ChannelMessage;
+                    const normalized = normalizeChannelMessage(cm);
                     const idx = this.requests.findIndex(
                         (el) => el.id === cm.id,
                     );
 
-                    if (cm.state === "Disconnected") {
+                    if (normalized.state === "Disconnected") {
                         this.toDelete.push({
                             id: cm.id,
                             triggered: Date.now(),
@@ -232,14 +239,14 @@ export default {
                     if (idx !== -1) {
                         const prev = this.requests[idx];
                         if (prev) {
-                            this.requests.splice(idx, 1, {
-                                ...cm,
-                                state: cm.state ?? prev.state,
-                                meta: cm.meta ?? prev.meta,
-                            });
+                            this.requests.splice(
+                                idx,
+                                1,
+                                mergeNormalizedRequest(prev, normalized),
+                            );
                         }
                     } else {
-                        this.requests.push(cm);
+                        this.requests.push(normalized);
                     }
                 }),
             );
@@ -307,8 +314,8 @@ export default {
     },
 
     computed: {
-        vm(): this {
-            return this;
+        vm(): TauriVM {
+            return this as unknown as TauriVM;
         },
         displayedIsEmpty(): boolean {
             return this.displayedItems.length === 0;

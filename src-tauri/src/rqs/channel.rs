@@ -1,29 +1,33 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::{TransferState, hdl::info::TransferMetadata};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum TransferAction {
     ConsentAccept,
     ConsentDecline,
     TransferCancel,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum TransferKind {
     Inbound,
     Outbound,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct MessageClient {
     pub kind: TransferKind,
     pub state: Option<TransferState>,
     pub metadata: Option<TransferMetadata>,
 }
 
-// TODO: This should be separate structs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum Message {
     Lib { action: TransferAction },
     Client(MessageClient),
@@ -38,7 +42,8 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ChannelMessage {
     pub id: String,
     pub msg: Message,

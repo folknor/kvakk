@@ -58,6 +58,9 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "sync", "time", "io-util", "signal"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# TypeScript bindings generation
+ts-rs = "10"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

@@ -14,11 +14,15 @@ use sha2::Sha256;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
+use ts_rs::TS;
+
 use crate::CUSTOM_DOWNLOAD;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, TS)]
+#[ts(export)]
 #[allow(dead_code)]
 pub enum DeviceType {
+    #[default]
     Unknown = 0,
     Phone = 1,
     Tablet = 2,
@@ -38,7 +42,8 @@ impl DeviceType {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TS)]
+#[ts(export)]
 pub struct RemoteDeviceInfo {
     pub name: String,
     pub device_type: DeviceType,

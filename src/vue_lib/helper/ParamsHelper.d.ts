@@ -1,16 +1,15 @@
 import { UnlistenFn } from "@tauri-apps/api/event";
 
-import { ToDelete } from "../types";
+import { NormalizedRequest, ToDelete } from "../types";
 
 import { EndpointInfo } from "@/bindings/EndpointInfo";
 import { OutboundPayload } from "@/bindings/OutboundPayload";
-import { ChannelMessage } from "@/bindings/ChannelMessage";
 
 export interface TauriVM {
     isAppInForeground: boolean;
     discoveryRunning: boolean;
     isDragHovering: boolean;
-    requests: ChannelMessage[];
+    requests: NormalizedRequest[];
     endpointsInfo: EndpointInfo[];
     toDelete: ToDelete[];
     outboundPayload: OutboundPayload | undefined;

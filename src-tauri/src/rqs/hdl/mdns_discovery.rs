@@ -4,11 +4,13 @@ use mdns_sd::{ServiceDaemon, ServiceEvent};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 use crate::utils::{is_not_self_ip, parse_mdns_endpoint_info};
 use crate::DeviceType;
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, TS)]
+#[ts(export)]
 pub struct EndpointInfo {
     pub fullname: String,
     pub id: String,

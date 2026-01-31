@@ -226,6 +226,11 @@ impl OutboundRequest {
                         .serialize(),
                     ),
                     mediums: vec![Medium::WifiLan.into()],
+                    // Nonce for simultaneous connection tiebreaking
+                    nonce: Some(rand::rng().random()),
+                    // Keepalive configuration (10 second interval, 30 second timeout)
+                    keep_alive_interval_millis: Some(10_000),
+                    keep_alive_timeout_millis: Some(30_000),
                     ..Default::default()
                 }),
                 ..Default::default()

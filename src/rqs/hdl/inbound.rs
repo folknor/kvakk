@@ -667,11 +667,45 @@ impl InboundRequest {
         Ok(())
     }
 
+    /// Process a control message (error, cancel, ack).
+    async fn process_control_message(
+        &mut self,
+        header: &PayloadHeader,
+        control: &location_nearby_connections::payload_transfer_frame::ControlMessage,
+    ) -> Result<(), anyhow::Error> {
+        use location_nearby_connections::payload_transfer_frame::control_message::EventType;
+
+        let payload_id = header.id();
+        match control.event() {
+            EventType::PayloadError => {
+                warn!("Received PAYLOAD_ERROR for payload {payload_id}");
+                // Clean up the failed transfer
+                self.state.transferred_files.remove(&payload_id);
+                self.state.payload_buffers.remove(&payload_id);
+            }
+            EventType::PayloadCanceled => {
+                info!("Received PAYLOAD_CANCELED for payload {payload_id}");
+                // Clean up the canceled transfer
+                self.state.transferred_files.remove(&payload_id);
+                self.state.payload_buffers.remove(&payload_id);
+            }
+            EventType::PayloadReceivedAck => {
+                debug!("Received PAYLOAD_RECEIVED_ACK for payload {payload_id} at offset {}", control.offset());
+            }
+            EventType::UnknownEventType => {
+                warn!("Received unknown control event for payload {payload_id}");
+            }
+        }
+        Ok(())
+    }
+
     /// Process a payload transfer frame.
     async fn process_payload_transfer(
         &mut self,
         v1_frame: &location_nearby_connections::V1Frame,
     ) -> Result<(), anyhow::Error> {
+        use location_nearby_connections::payload_transfer_frame::PacketType;
+
         trace!("Received FrameType::PayloadTransfer");
         let payload_transfer = v1_frame
             .payload_transfer
@@ -682,6 +716,21 @@ impl InboundRequest {
             .payload_header
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+        // Check packet type - could be DATA or CONTROL
+        match payload_transfer.packet_type() {
+            PacketType::Control => {
+                let control = payload_transfer
+                    .control_message
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Missing control_message in CONTROL packet"))?;
+                return self.process_control_message(header, control).await;
+            }
+            PacketType::Data | PacketType::UnknownPacketType => {
+                // Continue with normal data processing
+            }
+        }
+
         let chunk = payload_transfer
             .payload_chunk
             .as_ref()
@@ -691,11 +740,12 @@ impl InboundRequest {
             payload_header::PayloadType::Bytes => self.process_bytes_payload(header, chunk).await,
             payload_header::PayloadType::File => self.process_file_payload(header, chunk).await,
             payload_header::PayloadType::Stream => {
-                error!("Unhandled PayloadType::Stream");
-                Ok(())
+                // Handle stream similarly to bytes - accumulate and process
+                debug!("Processing PayloadType::Stream as bytes");
+                self.process_bytes_payload(header, chunk).await
             }
             payload_header::PayloadType::UnknownPayloadType => {
-                error!("Invalid PayloadType::UnknownPayloadType");
+                warn!("Received UnknownPayloadType, ignoring");
                 Ok(())
             }
         }

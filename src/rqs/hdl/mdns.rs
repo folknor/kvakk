@@ -1,9 +1,42 @@
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use std::net::Ipv4Addr;
+
+use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use tokio::sync::broadcast::Receiver;
 use tokio_util::sync::CancellationToken;
 
 use crate::utils::{gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
 use crate::DEVICE_NAME;
+
+/// Find all usable IPv4 addresses (excluding loopback/link-local/Docker)
+fn get_local_network_ips() -> Vec<Ipv4Addr> {
+    let mut ips = Vec::new();
+
+    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+        for iface in interfaces {
+            // Skip loopback
+            if iface.is_loopback() {
+                continue;
+            }
+            // Skip non-IPv4
+            let ip = match iface.ip() {
+                std::net::IpAddr::V4(ip) => ip,
+                _ => continue,
+            };
+            // Skip link-local (169.254.x.x)
+            if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+                continue;
+            }
+            // Skip virtualization networks (172.16.x.x - 172.31.x.x)
+            // Covers Docker, WSL2, Hyper-V, VMware, VirtualBox, etc.
+            if ip.octets()[0] == 172 && (16..=31).contains(&ip.octets()[1]) {
+                continue;
+            }
+            ips.push(ip);
+        }
+    }
+
+    ips
+}
 
 const INNER_NAME: &str = "MDnsServer";
 
@@ -72,27 +105,47 @@ impl MDnsServer {
         service_port: u16,
         device_type: DeviceType,
     ) -> Result<ServiceInfo, anyhow::Error> {
-        // This `name` is going to be random every time RQS service restarts.
-        // If that is not desired, derive host_name, etc. via some other means
         let name = gen_mdns_name(endpoint_id);
         let hostname = format!("{name}.local.");
         let device_name = DEVICE_NAME
             .read()
             .map_err(|e| anyhow::anyhow!("Failed to read device name: {e}"))?
             .clone();
-        info!("Broadcasting with: device_name={device_name}, host_name={hostname}");
-        let endpoint_info = gen_mdns_endpoint_info(device_type as u8, &device_name);
 
+        // Find all usable IPv4 addresses (local network + Tailscale)
+        let local_ips = get_local_network_ips();
+        info!("Broadcasting with: device_name={device_name}, host_name={hostname}, ips={local_ips:?}");
+
+        let endpoint_info = gen_mdns_endpoint_info(device_type as u8, &device_name);
         let properties = [("n", endpoint_info)];
-        let si = ServiceInfo::new(
+
+        // Pass IPs as comma-separated string, or empty for auto-detection
+        let ip_str = if local_ips.is_empty() {
+            String::new()
+        } else {
+            local_ips
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+
+        let mut si = ServiceInfo::new(
             "_FC9F5ED42C8A._tcp.local.",
             &name,
             &hostname,
-            "",
+            &ip_str,
             service_port,
             &properties[..],
-        )?
-        .enable_addr_auto();
+        )?;
+
+        // If no specific IPs were set, enable auto-detection but limit to IPv4
+        if local_ips.is_empty() {
+            si = si.enable_addr_auto();
+        }
+
+        // Only broadcast on IPv4 interfaces
+        si.set_interfaces(vec![IfKind::IPv4]);
 
         Ok(si)
     }

@@ -61,6 +61,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # GUI (egui)
 eframe = "0.33"
 rfd = "0.17"
+catppuccin-egui = { version = "5.7", default-features = false, features = ["egui33"] }
 
 [profile.release]
 lto = true

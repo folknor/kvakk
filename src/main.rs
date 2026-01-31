@@ -9,20 +9,58 @@ use rqs::hdl::{EndpointInfo, TransferState};
 use rqs::{OutboundPayload, SendInfo, RQS};
 use tokio::sync::broadcast;
 
+// Catppuccin Mocha palette as egui colors
+mod theme {
+    use eframe::egui::Color32;
+
+    // Base colors
+    pub const BASE: Color32 = Color32::from_rgb(30, 30, 46);
+    pub const CRUST: Color32 = Color32::from_rgb(17, 17, 27);
+
+    // Surface colors
+    pub const SURFACE0: Color32 = Color32::from_rgb(49, 50, 68);
+    pub const SURFACE1: Color32 = Color32::from_rgb(69, 71, 90);
+
+    // Text colors
+    pub const TEXT: Color32 = Color32::from_rgb(205, 214, 244);
+    pub const SUBTEXT1: Color32 = Color32::from_rgb(186, 194, 222);
+    pub const SUBTEXT0: Color32 = Color32::from_rgb(166, 173, 200);
+    pub const OVERLAY0: Color32 = Color32::from_rgb(108, 112, 134);
+
+    // Accent colors
+    pub const BLUE: Color32 = Color32::from_rgb(137, 180, 250);
+    pub const GREEN: Color32 = Color32::from_rgb(166, 227, 161);
+    pub const YELLOW: Color32 = Color32::from_rgb(249, 226, 175);
+    pub const RED: Color32 = Color32::from_rgb(243, 139, 168);
+    pub const MAUVE: Color32 = Color32::from_rgb(203, 166, 247);
+}
+
+fn configure_style(ctx: &egui::Context) {
+    catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
+
+    let mut style = (*ctx.style()).clone();
+    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+    style.spacing.button_padding = egui::vec2(14.0, 8.0);
+    ctx.set_style(style);
+}
+
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 500.0])
-            .with_min_inner_size([300.0, 400.0]),
+            .with_inner_size([420.0, 520.0])
+            .with_min_inner_size([320.0, 400.0]),
         ..Default::default()
     };
 
     eframe::run_native(
         "RQuickShare",
         options,
-        Box::new(|cc| Ok(Box::new(RQuickShareApp::new(cc)))),
+        Box::new(|cc| {
+            configure_style(&cc.egui_ctx);
+            Ok(Box::new(RQuickShareApp::new(cc)))
+        }),
     )
 }
 
@@ -37,14 +75,9 @@ struct Transfer {
 }
 
 struct RQuickShareApp {
-    // Channel to receive messages from RQS backend
     rx: mpsc::Receiver<ChannelMessage>,
-    // Channel to send commands to RQS backend
     cmd_tx: Option<broadcast::Sender<ChannelMessage>>,
-    // Channel to send files
     send_tx: Option<tokio::sync::mpsc::Sender<SendInfo>>,
-
-    // UI state
     transfers: Vec<Transfer>,
     endpoints: Vec<EndpointInfo>,
     outbound_files: Vec<String>,
@@ -53,7 +86,6 @@ struct RQuickShareApp {
 
 impl RQuickShareApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Channels for communicating between tokio runtime and egui
         let (tx, rx) = mpsc::channel();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<(
             broadcast::Sender<ChannelMessage>,
@@ -62,7 +94,6 @@ impl RQuickShareApp {
 
         let ctx = cc.egui_ctx.clone();
 
-        // Spawn tokio runtime in background thread
         thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async move {
@@ -70,13 +101,10 @@ impl RQuickShareApp {
                 let message_sender = rqs.message_sender.clone();
                 let mut receiver = rqs.message_sender.subscribe();
 
-                // Start RQS
                 match rqs.run().await {
                     Ok((sender_file, _ble_receiver)) => {
-                        // Send initialization data back to the main thread
                         drop(init_tx.send((message_sender, sender_file)));
 
-                        // Forward messages to UI
                         loop {
                             match receiver.recv().await {
                                 Ok(msg) => {
@@ -99,7 +127,6 @@ impl RQuickShareApp {
             });
         });
 
-        // Get the channels (blocking wait, but should be fast)
         let (cmd_tx, send_tx) = init_rx
             .recv()
             .map(|(cmd, send)| (Some(cmd), Some(send)))
@@ -117,19 +144,16 @@ impl RQuickShareApp {
     }
 
     fn process_messages(&mut self) {
-        // Process all pending messages
         while let Ok(msg) = self.rx.try_recv() {
             if let Message::Client(client) = &msg.msg {
                 let state = client.state.clone().unwrap_or(TransferState::Initial);
 
-                // Find existing transfer or create new one
                 if let Some(transfer) = self.transfers.iter_mut().find(|t| t.id == msg.id) {
                     transfer.state = state.clone();
                     if let Some(meta) = &client.metadata {
                         transfer.total_bytes = meta.total_bytes;
                         transfer.ack_bytes = meta.ack_bytes;
                     }
-                    // Update state for finished transfers
                     if matches!(state, TransferState::Finished | TransferState::Cancelled | TransferState::Rejected) {
                         transfer.state = state;
                     }
@@ -156,10 +180,7 @@ impl RQuickShareApp {
             }
         }
 
-        // Clean up disconnected transfers
-        self.transfers.retain(|t| {
-            !matches!(t.state, TransferState::Disconnected)
-        });
+        self.transfers.retain(|t| !matches!(t.state, TransferState::Disconnected));
     }
 
     fn send_action(&self, id: &str, action: TransferAction) {
@@ -178,13 +199,37 @@ impl RQuickShareApp {
         self.transfers.retain(|t| t.id != id);
     }
 
+    fn draw_header(&self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("header")
+            .frame(egui::Frame::new()
+                .fill(theme::CRUST)
+                .inner_margin(egui::Margin::symmetric(16, 12)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("RQuickShare")
+                        .size(20.0)
+                        .strong()
+                        .color(theme::TEXT));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(&self.status_message)
+                            .size(13.0)
+                            .color(theme::SUBTEXT0));
+                    });
+                });
+            });
+    }
+
     fn draw_transfers_section(&mut self, ui: &mut egui::Ui) {
         if self.transfers.is_empty() {
             return;
         }
 
-        ui.heading("Transfers");
-        ui.separator();
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Transfers")
+            .size(16.0)
+            .strong()
+            .color(theme::TEXT));
+        ui.add_space(8.0);
 
         let transfers_snapshot: Vec<_> = self.transfers.iter().map(|t| {
             (t.id.clone(), t.device_name.clone(), t.file_names.clone(),
@@ -194,20 +239,7 @@ impl RQuickShareApp {
         let mut to_clear = Vec::new();
 
         for (id, device_name, file_names, pin_code, state, total_bytes, ack_bytes) in transfers_snapshot {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.strong(&device_name);
-                    if let Some(pin) = &pin_code {
-                        ui.label(format!("PIN: {pin}"));
-                    }
-                });
-
-                for file in &file_names {
-                    ui.label(format!("  {file}"));
-                }
-
-                self.draw_transfer_state(ui, &id, &state, total_bytes, ack_bytes, &mut to_clear);
-            });
+            self.draw_transfer_card(ui, &id, &device_name, &file_names, &pin_code, &state, total_bytes, ack_bytes, &mut to_clear);
             ui.add_space(8.0);
         }
 
@@ -216,16 +248,60 @@ impl RQuickShareApp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn draw_transfer_card(&self, ui: &mut egui::Ui, id: &str, device_name: &str,
+                          file_names: &[String], pin_code: &Option<String>,
+                          state: &TransferState, total_bytes: u64, ack_bytes: u64,
+                          to_clear: &mut Vec<String>) {
+        egui::Frame::new()
+            .fill(theme::SURFACE0)
+            .stroke(egui::Stroke::new(1.0, theme::SURFACE1))
+            .corner_radius(10)
+            .inner_margin(egui::Margin::same(14))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(device_name)
+                        .strong()
+                        .color(theme::TEXT));
+                    if let Some(pin) = pin_code {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(egui::RichText::new(format!("PIN: {pin}"))
+                                .size(12.0)
+                                .color(theme::MAUVE));
+                        });
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                for file in file_names {
+                    ui.label(egui::RichText::new(format!("  {file}"))
+                        .size(13.0)
+                        .color(theme::SUBTEXT1));
+                }
+
+                ui.add_space(8.0);
+                self.draw_transfer_state(ui, id, state, total_bytes, ack_bytes, to_clear);
+            });
+    }
+
     #[allow(clippy::cast_precision_loss)]
     fn draw_transfer_state(&self, ui: &mut egui::Ui, id: &str, state: &TransferState,
                            total_bytes: u64, ack_bytes: u64, to_clear: &mut Vec<String>) {
         match state {
             TransferState::WaitingForUserConsent => {
                 ui.horizontal(|ui| {
-                    if ui.button("Accept").clicked() {
+                    if ui.add(egui::Button::new(
+                        egui::RichText::new("Accept").color(theme::CRUST))
+                        .fill(theme::GREEN)
+                    ).clicked() {
                         self.send_action(id, TransferAction::ConsentAccept);
                     }
-                    if ui.button("Decline").clicked() {
+                    ui.add_space(8.0);
+                    if ui.add(egui::Button::new(
+                        egui::RichText::new("Decline").color(theme::TEXT))
+                        .fill(theme::SURFACE1)
+                    ).clicked() {
                         self.send_action(id, TransferAction::ConsentDecline);
                     }
                 });
@@ -236,40 +312,69 @@ impl RQuickShareApp {
                 } else {
                     0.0
                 };
-                ui.add(egui::ProgressBar::new(progress).show_percentage());
-                if ui.button("Cancel").clicked() {
+                ui.add(egui::ProgressBar::new(progress)
+                    .show_percentage()
+                    .fill(theme::BLUE));
+                ui.add_space(6.0);
+                if ui.add(egui::Button::new(
+                    egui::RichText::new("Cancel").size(12.0).color(theme::SUBTEXT0))
+                    .fill(theme::SURFACE1)
+                ).clicked() {
                     self.send_action(id, TransferAction::TransferCancel);
                 }
             }
             TransferState::Finished => {
-                ui.colored_label(egui::Color32::GREEN, "Transfer complete!");
-                if ui.button("Clear").clicked() {
-                    to_clear.push(id.to_string());
-                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Transfer complete!")
+                        .color(theme::GREEN));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Clear").clicked() {
+                            to_clear.push(id.to_string());
+                        }
+                    });
+                });
             }
             TransferState::Cancelled => {
-                ui.colored_label(egui::Color32::YELLOW, "Cancelled");
-                if ui.button("Clear").clicked() {
-                    to_clear.push(id.to_string());
-                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Cancelled").color(theme::YELLOW));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Clear").clicked() {
+                            to_clear.push(id.to_string());
+                        }
+                    });
+                });
             }
             TransferState::Rejected => {
-                ui.colored_label(egui::Color32::RED, "Rejected");
-                if ui.button("Clear").clicked() {
-                    to_clear.push(id.to_string());
-                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Rejected").color(theme::RED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Clear").clicked() {
+                            to_clear.push(id.to_string());
+                        }
+                    });
+                });
             }
             _ => {
-                ui.label(format!("State: {state:?}"));
+                ui.label(egui::RichText::new(format!("State: {state:?}"))
+                    .size(12.0)
+                    .color(theme::OVERLAY0));
             }
         }
     }
 
     fn draw_send_section(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Send Files");
-        ui.separator();
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Send Files")
+            .size(16.0)
+            .strong()
+            .color(theme::TEXT));
+        ui.add_space(8.0);
 
-        if ui.button("Select Files...").clicked()
+        if ui.add(egui::Button::new(
+            egui::RichText::new("Select Files...").color(theme::CRUST))
+            .fill(theme::BLUE)
+            .min_size(egui::vec2(140.0, 36.0))
+        ).clicked()
             && let Some(paths) = rfd::FileDialog::new().pick_files()
         {
             self.outbound_files = paths.iter().map(|p| p.display().to_string()).collect();
@@ -277,30 +382,69 @@ impl RQuickShareApp {
         }
 
         if self.outbound_files.is_empty() {
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new("No files selected")
+                .size(13.0)
+                .color(theme::OVERLAY0));
             return;
         }
 
-        ui.label("Selected files:");
-        for file in &self.outbound_files {
-            ui.label(format!("  {file}"));
-        }
+        ui.add_space(12.0);
+
+        egui::Frame::new()
+            .fill(theme::SURFACE0)
+            .stroke(egui::Stroke::new(1.0, theme::SURFACE1))
+            .corner_radius(10)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Selected files:")
+                    .size(13.0)
+                    .color(theme::SUBTEXT0));
+                ui.add_space(4.0);
+                for file in &self.outbound_files {
+                    let filename = std::path::Path::new(file)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(file);
+                    ui.label(egui::RichText::new(format!("  {filename}"))
+                        .size(13.0)
+                        .color(theme::TEXT));
+                }
+            });
+
+        ui.add_space(12.0);
 
         if !self.endpoints.is_empty() {
             self.draw_endpoint_buttons(ui);
         } else {
-            ui.label("(Discovery not yet implemented in egui version)");
+            ui.label(egui::RichText::new("Searching for nearby devices...")
+                .size(13.0)
+                .italics()
+                .color(theme::OVERLAY0));
         }
 
-        if ui.button("Clear Selection").clicked() {
+        ui.add_space(8.0);
+        if ui.add(egui::Button::new(
+            egui::RichText::new("Clear Selection").size(13.0).color(theme::SUBTEXT0))
+            .fill(theme::SURFACE1)
+        ).clicked() {
             self.outbound_files.clear();
             self.status_message = String::from("Ready");
         }
     }
 
     fn draw_endpoint_buttons(&self, ui: &mut egui::Ui) {
-        ui.label("Send to:");
+        ui.label(egui::RichText::new("Send to:")
+            .size(13.0)
+            .color(theme::SUBTEXT0));
+        ui.add_space(4.0);
+
         for endpoint in &self.endpoints {
-            if ui.button(endpoint.name.as_deref().unwrap_or("Unknown")).clicked()
+            if ui.add(egui::Button::new(
+                egui::RichText::new(endpoint.name.as_deref().unwrap_or("Unknown"))
+                    .color(theme::TEXT))
+                .fill(theme::SURFACE1)
+            ).clicked()
                 && let (Some(send_tx), Some(ip), Some(port)) = (&self.send_tx, &endpoint.ip, &endpoint.port)
             {
                 let info = SendInfo {
@@ -326,20 +470,19 @@ impl eframe::App for RQuickShareApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_messages();
 
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("RQuickShare");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(&self.status_message);
+        self.draw_header(ctx);
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new()
+                .fill(theme::BASE)
+                .inner_margin(egui::Margin::same(16)))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.draw_transfers_section(ui);
+                    ui.add_space(20.0);
+                    self.draw_send_section(ui);
                 });
             });
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_transfers_section(ui);
-            ui.add_space(16.0);
-            self.draw_send_section(ui);
-        });
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }

@@ -52,6 +52,10 @@ type HmacSha256 = Hmac<Sha256>;
 const SANE_FRAME_LENGTH: i32 = 5 * 1024 * 1024;
 const SANITY_DURATION: Duration = Duration::from_micros(10);
 
+/// Timeout for waiting for PAYLOAD_RECEIVED_ACK and ack_safe_to_disconnect
+/// Google uses 30 seconds for ACK and 10 seconds for disconnect, we use 10 for the whole process
+const ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OutboundPayload {
     Files(Vec<String>),
@@ -102,8 +106,24 @@ impl OutboundRequest {
     }
 
     pub async fn handle(&mut self) -> Result<(), anyhow::Error> {
+        // Check for ACK timeout
+        if let Some(started) = self.state.ack_wait_started {
+            if started.elapsed() > ACK_TIMEOUT {
+                info!("ACK timeout reached, finishing transfer");
+                self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
+                return Err(anyhow!(crate::errors::AppError::NotAnError));
+            }
+        }
+
         // Buffer for the 4-byte length
         let mut length_buf = [0u8; 4];
+
+        // Use a shorter timeout when waiting for ACKs to allow periodic timeout checks
+        let read_timeout = if self.state.ack_wait_started.is_some() {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(30)
+        };
 
         tokio::select! {
             i = self.receiver.recv() => {
@@ -132,10 +152,22 @@ impl OutboundRequest {
                     }
                 }
             },
-            h = stream_read_exact(&mut self.socket, &mut length_buf) => {
-                h?;
-
-                self._handle(length_buf).await?;
+            result = tokio::time::timeout(read_timeout, stream_read_exact(&mut self.socket, &mut length_buf)) => {
+                match result {
+                    Ok(h) => {
+                        h?;
+                        self._handle(length_buf).await?;
+                    }
+                    Err(_) => {
+                        // Timeout - if we're waiting for ACKs, this is expected
+                        // Just return Ok to let the loop continue and check timeout
+                        if self.state.ack_wait_started.is_some() {
+                            return Ok(());
+                        }
+                        // Otherwise, this is a real timeout error
+                        return Err(anyhow!("Read timeout"));
+                    }
+                }
             }
         }
 
@@ -469,13 +501,28 @@ impl OutboundRequest {
                         match control.event() {
                             EventType::PayloadReceivedAck => {
                                 info!("Received PAYLOAD_RECEIVED_ACK for payload {payload_id}");
-                                // Receiver confirmed receipt - transfer is truly complete
+                                // Remove from pending set
+                                self.state.pending_payload_acks.remove(&payload_id);
+
+                                // If we were waiting for ACKs and all are received, request disconnect
+                                if self.state.state == TransferState::WaitingForPayloadAck
+                                    && self.state.pending_payload_acks.is_empty()
+                                {
+                                    info!("All payload ACKs received, requesting safe disconnect");
+                                    self.update_state(|e| {
+                                        e.state = TransferState::WaitingForDisconnectAck;
+                                    }, false).await;
+                                    self.request_disconnection().await?;
+                                }
                             }
                             EventType::PayloadError => {
                                 warn!("Received PAYLOAD_ERROR for payload {payload_id}");
+                                // Remove from pending - we got a response even if it's an error
+                                self.state.pending_payload_acks.remove(&payload_id);
                             }
                             EventType::PayloadCanceled => {
                                 info!("Received PAYLOAD_CANCELED for payload {payload_id}");
+                                self.state.pending_payload_acks.remove(&payload_id);
                             }
                             EventType::UnknownEventType => {
                                 debug!("Received unknown control event for payload {payload_id}");
@@ -557,13 +604,15 @@ impl OutboundRequest {
                 debug!("Received Disconnection frame");
                 if let Some(disconnection) = &v1_frame.disconnection {
                     if disconnection.ack_safe_to_disconnect() {
-                        info!("Received disconnect acknowledgment, closing connection");
+                        info!("Received ack_safe_to_disconnect, transfer complete");
+                        self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
                         return Err(anyhow!(crate::errors::AppError::NotAnError));
                     }
                     if disconnection.request_safe_to_disconnect() {
                         // Receiver is requesting we disconnect - send ack and close
                         debug!("Receiver requested disconnection, sending ack");
-                        self.disconnection().await?;
+                        self.send_disconnect_ack().await?;
+                        self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
                         return Err(anyhow!(crate::errors::AppError::NotAnError));
                     }
                 }
@@ -926,6 +975,9 @@ impl OutboundRequest {
         let ids: Vec<i64> = self.state.transferred_files.keys().copied().collect();
         info!("We are sending: {ids:?}");
 
+        // Track all payload IDs we're sending - we'll wait for ACKs for these
+        self.state.pending_payload_acks = ids.iter().copied().collect();
+
         for file_id in ids {
             loop {
                 // Check for cancellation before each chunk
@@ -941,17 +993,29 @@ impl OutboundRequest {
             }
         }
 
-        info!("All files have been transferred");
-        self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
+        info!("All files have been sent, waiting for PAYLOAD_RECEIVED_ACK");
 
-        // Request safe disconnection and wait for ack
-        self.request_disconnection().await?;
+        // Transition to waiting for ACKs - the main handle loop will process them
+        self.update_state(|e| {
+            e.state = TransferState::WaitingForPayloadAck;
+            e.ack_wait_started = Some(std::time::Instant::now());
+        }, true).await;
+
+        // If no files were sent (empty pending_payload_acks), request disconnect immediately
+        if self.state.pending_payload_acks.is_empty() {
+            info!("No payloads to wait for, requesting safe disconnect");
+            self.update_state(|e| {
+                e.state = TransferState::WaitingForDisconnectAck;
+            }, false).await;
+            self.request_disconnection().await?;
+        }
+
         Ok(true)
     }
 
-    /// Request safe disconnection from the receiver
+    /// Request safe disconnection from the receiver (sends request_safe_to_disconnect: true)
     async fn request_disconnection(&mut self) -> Result<(), anyhow::Error> {
-        debug!("Requesting safe disconnection");
+        debug!("Sending request_safe_to_disconnect");
         let frame = location_nearby_connections::OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
             v1: Some(location_nearby_connections::V1Frame {
@@ -972,9 +1036,33 @@ impl OutboundRequest {
             self.send_frame(frame.encode_to_vec()).await?;
         }
 
-        // Wait for disconnect ack (with timeout via the main read loop)
-        // The receiver should send back ack_safe_to_disconnect
-        debug!("Waiting for disconnect acknowledgment");
+        debug!("Waiting for ack_safe_to_disconnect");
+        Ok(())
+    }
+
+    /// Send disconnect acknowledgment (sends ack_safe_to_disconnect: true)
+    async fn send_disconnect_ack(&mut self) -> Result<(), anyhow::Error> {
+        debug!("Sending ack_safe_to_disconnect");
+        let frame = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    ack_safe_to_disconnect: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+
+        if self.state.encryption_done {
+            self.encrypt_and_send(&frame).await?;
+        } else {
+            self.send_frame(frame.encode_to_vec()).await?;
+        }
+
         Ok(())
     }
 

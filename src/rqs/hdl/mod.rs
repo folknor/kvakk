@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use info::{InternalFileInfo, TransferMetadata};
 use p256::{PublicKey, SecretKey};
@@ -45,6 +45,10 @@ pub enum TransferState {
     WaitingForUserConsent,
     ReceivingFiles,
     SendingFiles,
+    /// All files sent, waiting for PAYLOAD_RECEIVED_ACK from receiver
+    WaitingForPayloadAck,
+    /// Sent request_safe_to_disconnect, waiting for ack_safe_to_disconnect
+    WaitingForDisconnectAck,
     Disconnected,
     Rejected,
     Cancelled,
@@ -83,6 +87,12 @@ pub struct InnerState {
     // pub text_is_url: bool,
     // pub wifi_ssid: Option<String>,
     pub payload_buffers: HashMap<i64, Vec<u8>>,
+
+    // Used for outbound transfer completion handshake
+    /// Payload IDs we're waiting to receive ACKs for
+    pub pending_payload_acks: HashSet<i64>,
+    /// Timestamp when we started waiting for ACKs (for timeout)
+    pub ack_wait_started: Option<std::time::Instant>,
 }
 
 impl InnerState {
@@ -110,6 +120,8 @@ impl InnerState {
             send_hmac_key: None,
             text_payload: None,
             payload_buffers: HashMap::new(),
+            pending_payload_acks: HashSet::new(),
+            ack_wait_started: None,
         }
     }
 }

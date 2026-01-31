@@ -796,6 +796,22 @@ impl InboundRequest {
                 trace!("Sending keepalive");
                 self.send_keepalive(true).await?;
             }
+            location_nearby_connections::v1_frame::FrameType::Disconnection => {
+                debug!("Received Disconnection frame");
+                if let Some(disconnection) = &v1_frame.disconnection {
+                    if disconnection.request_safe_to_disconnect() {
+                        // Sender is requesting safe disconnect - send ack
+                        info!("Received request_safe_to_disconnect, sending ack");
+                        self.send_disconnect_ack().await?;
+                        return Err(anyhow!(crate::errors::AppError::NotAnError));
+                    }
+                    if disconnection.ack_safe_to_disconnect() {
+                        // Sender acknowledged our disconnect request
+                        info!("Received ack_safe_to_disconnect, closing");
+                        return Err(anyhow!(crate::errors::AppError::NotAnError));
+                    }
+                }
+            }
             location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeRetry => {
                 debug!("Received BANDWIDTH_UPGRADE_RETRY frame (ignoring)");
             }
@@ -1128,6 +1144,30 @@ impl InboundRequest {
                     location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
                 ),
                 disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+
+        if self.state.encryption_done {
+            self.encrypt_and_send(&frame).await
+        } else {
+            self.send_frame(frame.encode_to_vec()).await
+        }
+    }
+
+    /// Send disconnect acknowledgment (sends ack_safe_to_disconnect: true)
+    async fn send_disconnect_ack(&mut self) -> Result<(), anyhow::Error> {
+        debug!("Sending ack_safe_to_disconnect");
+        let frame = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    ack_safe_to_disconnect: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()

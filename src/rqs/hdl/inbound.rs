@@ -60,14 +60,7 @@ impl InboundRequest {
 
         Self {
             socket,
-            state: InnerState {
-                id,
-                server_seq: 0,
-                client_seq: 0,
-                state: TransferState::Initial,
-                encryption_done: true,
-                ..Default::default()
-            },
+            state: InnerState::new(id, None),
             sender,
             receiver,
         }
@@ -704,9 +697,9 @@ impl InboundRequest {
             .ok_or_else(|| anyhow!("Missing recv_hmac_key"))?;
         let mut hmac = HmacSha256::new_from_slice(recv_hmac_key)?;
         hmac.update(&smsg.header_and_body);
-        if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice() {
-            return Err(anyhow!("hmac!=signature"));
-        }
+        // Use constant-time comparison to prevent timing attacks
+        hmac.verify_slice(smsg.signature.as_slice())
+            .map_err(|_| anyhow!("HMAC verification failed"))?;
 
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;
         let key = self.state.decrypt_key.as_ref()
@@ -741,8 +734,21 @@ impl InboundRequest {
                 trace!("Sending keepalive");
                 self.send_keepalive(true).await?;
             }
+            location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeRetry => {
+                debug!("Received BANDWIDTH_UPGRADE_RETRY frame (ignoring)");
+            }
+            location_nearby_connections::v1_frame::FrameType::AutoResume => {
+                debug!("Received AUTO_RESUME frame (ignoring)");
+            }
+            location_nearby_connections::v1_frame::FrameType::AutoReconnect => {
+                debug!("Received AUTO_RECONNECT frame (ignoring)");
+            }
+            location_nearby_connections::v1_frame::FrameType::AuthenticationMessage
+            | location_nearby_connections::v1_frame::FrameType::AuthenticationResult => {
+                debug!("Received authentication frame (ignoring)");
+            }
             _ => {
-                error!("Unhandled offline frame encrypted: {offline:?}");
+                warn!("Unhandled offline frame: {:?}", v1_frame.r#type());
             }
         }
 

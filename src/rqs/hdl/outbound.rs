@@ -82,24 +82,19 @@ impl OutboundRequest {
         Self {
             endpoint_id,
             socket,
-            state: InnerState {
+            state: InnerState::new(
                 id,
-                server_seq: 0,
-                client_seq: 0,
-                state: TransferState::Initial,
-                encryption_done: true,
-                transfer_metadata: Some(TransferMetadata {
+                Some(TransferMetadata {
                     source: Some(rdi),
                     payload_kind: TransferPayloadKind::Files,
                     payload: Some(TransferPayload::Files(files.clone())),
-                    id: Default::default(),
-                    pin_code: Default::default(),
-                    payload_preview: Default::default(),
-                    total_bytes: Default::default(),
-                    ack_bytes: Default::default(),
+                    id: String::new(),
+                    pin_code: None,
+                    payload_preview: None,
+                    total_bytes: 0,
+                    ack_bytes: 0,
                 }),
-                ..Default::default()
-            },
+            ),
             sender,
             receiver,
             payload,
@@ -418,9 +413,9 @@ impl OutboundRequest {
             .ok_or_else(|| anyhow!("Missing recv_hmac_key"))?;
         let mut hmac = HmacSha256::new_from_slice(recv_hmac_key)?;
         hmac.update(&smsg.header_and_body);
-        if &hmac.finalize().into_bytes()[..] != smsg.signature.as_slice() {
-            return Err(anyhow!("hmac!=signature"));
-        }
+        // Use constant-time comparison to prevent timing attacks
+        hmac.verify_slice(smsg.signature.as_slice())
+            .map_err(|_| anyhow!("HMAC verification failed"))?;
 
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;
 

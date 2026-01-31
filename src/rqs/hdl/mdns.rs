@@ -7,7 +7,19 @@ use tokio_util::sync::CancellationToken;
 use crate::utils::{gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
 use crate::DEVICE_NAME;
 
-/// Find all usable IPv4 addresses (excluding loopback/link-local/Docker)
+/// Check if interface name belongs to a virtual/tunnel network
+fn is_virtual_interface(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    name_lower.starts_with("docker")
+        || name_lower.starts_with("br-")
+        || name_lower.starts_with("veth")
+        || name_lower.starts_with("virbr")
+        || name_lower.starts_with("tailscale")
+        || name_lower.starts_with("tun")
+        || name_lower.starts_with("tap")
+}
+
+/// Find all usable IPv4 addresses (excluding loopback/link-local/virtual networks)
 fn get_local_network_ips() -> Vec<Ipv4Addr> {
     let mut ips = Vec::new();
 
@@ -15,6 +27,10 @@ fn get_local_network_ips() -> Vec<Ipv4Addr> {
         for iface in interfaces {
             // Skip loopback
             if iface.is_loopback() {
+                continue;
+            }
+            // Skip virtual/tunnel interfaces by name
+            if is_virtual_interface(&iface.name) {
                 continue;
             }
             // Skip non-IPv4
@@ -29,6 +45,10 @@ fn get_local_network_ips() -> Vec<Ipv4Addr> {
             // Skip virtualization networks (172.16.x.x - 172.31.x.x)
             // Covers Docker, WSL2, Hyper-V, VMware, VirtualBox, etc.
             if ip.octets()[0] == 172 && (16..=31).contains(&ip.octets()[1]) {
+                continue;
+            }
+            // Skip Tailscale CGNAT range (100.64.0.0/10 = 100.64.x.x - 100.127.x.x)
+            if ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]) {
                 continue;
             }
             ips.push(ip);

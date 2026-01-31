@@ -1,6 +1,9 @@
+use std::sync::LazyLock;
+
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 
@@ -10,6 +13,12 @@ use crate::hdl::{InboundRequest, OutboundPayload, OutboundRequest, TransferState
 use crate::utils::RemoteDeviceInfo;
 
 const INNER_NAME: &str = "TcpServer";
+
+/// Maximum concurrent connections to prevent DoS/resource exhaustion
+const MAX_CONCURRENT_CONNECTIONS: usize = 100;
+
+/// Global semaphore for connection rate limiting
+static CONNECTION_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SendInfo {
@@ -62,10 +71,23 @@ impl TcpServer {
                     match r {
                         Ok((socket, remote_addr)) => {
                             trace!("{INNER_NAME}: new client: {remote_addr}");
+
+                            // Try to acquire connection permit (non-blocking)
+                            let permit = match CONNECTION_SEMAPHORE.try_acquire() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    warn!("{INNER_NAME}: connection limit reached, rejecting {remote_addr}");
+                                    drop(socket);
+                                    continue;
+                                }
+                            };
+
                             let esender = self.sender.clone();
                             let csender = self.sender.clone();
 
                             tokio::spawn(async move {
+                                // Permit is moved into the task and released when dropped
+                                let _permit = permit;
                                 let mut ir = InboundRequest::new(socket, remote_addr.to_string(), csender);
 
                                 loop {

@@ -460,6 +460,32 @@ impl OutboundRequest {
                     .payload_header
                     .as_ref()
                     .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+                // Check if this is a control message (ACK, error, cancel)
+                if payload_transfer.packet_type() == PacketType::Control {
+                    if let Some(control) = &payload_transfer.control_message {
+                        use crate::location_nearby_connections::payload_transfer_frame::control_message::EventType;
+                        let payload_id = header.id();
+                        match control.event() {
+                            EventType::PayloadReceivedAck => {
+                                info!("Received PAYLOAD_RECEIVED_ACK for payload {payload_id}");
+                                // Receiver confirmed receipt - transfer is truly complete
+                            }
+                            EventType::PayloadError => {
+                                warn!("Received PAYLOAD_ERROR for payload {payload_id}");
+                            }
+                            EventType::PayloadCanceled => {
+                                info!("Received PAYLOAD_CANCELED for payload {payload_id}");
+                            }
+                            EventType::UnknownEventType => {
+                                debug!("Received unknown control event for payload {payload_id}");
+                            }
+                        }
+                    }
+                    // Control messages don't have chunk data, so skip the rest
+                    return Ok(());
+                }
+
                 let chunk = payload_transfer
                     .payload_chunk
                     .as_ref()
@@ -527,8 +553,23 @@ impl OutboundRequest {
                 trace!("Sending keepalive");
                 self.send_keepalive(true).await?;
             }
+            location_nearby_connections::v1_frame::FrameType::Disconnection => {
+                debug!("Received Disconnection frame");
+                if let Some(disconnection) = &v1_frame.disconnection {
+                    if disconnection.ack_safe_to_disconnect() {
+                        info!("Received disconnect acknowledgment, closing connection");
+                        return Err(anyhow!(crate::errors::AppError::NotAnError));
+                    }
+                    if disconnection.request_safe_to_disconnect() {
+                        // Receiver is requesting we disconnect - send ack and close
+                        debug!("Receiver requested disconnection, sending ack");
+                        self.disconnection().await?;
+                        return Err(anyhow!(crate::errors::AppError::NotAnError));
+                    }
+                }
+            }
             _ => {
-                error!("Unhandled offline frame encrypted: {offline:?}");
+                debug!("Unhandled offline frame type: {:?}", v1_frame.r#type());
             }
         }
 
@@ -902,8 +943,39 @@ impl OutboundRequest {
 
         info!("All files have been transferred");
         self.update_state(|e| { e.state = TransferState::Finished; }, true).await;
-        self.disconnection().await?;
+
+        // Request safe disconnection and wait for ack
+        self.request_disconnection().await?;
         Ok(true)
+    }
+
+    /// Request safe disconnection from the receiver
+    async fn request_disconnection(&mut self) -> Result<(), anyhow::Error> {
+        debug!("Requesting safe disconnection");
+        let frame = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    request_safe_to_disconnect: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+
+        if self.state.encryption_done {
+            self.encrypt_and_send(&frame).await?;
+        } else {
+            self.send_frame(frame.encode_to_vec()).await?;
+        }
+
+        // Wait for disconnect ack (with timeout via the main read loop)
+        // The receiver should send back ack_safe_to_disconnect
+        debug!("Waiting for disconnect acknowledgment");
+        Ok(())
     }
 
     async fn process_consent(

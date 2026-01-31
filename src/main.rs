@@ -9,6 +9,12 @@ use rqs::hdl::{EndpointInfo, TransferState};
 use rqs::{OutboundPayload, SendInfo, RQS};
 use tokio::sync::broadcast;
 
+/// Message types for the GUI channel
+enum GuiMessage {
+    Channel(ChannelMessage),
+    Endpoint(EndpointInfo),
+}
+
 // Catppuccin Mocha palette as egui colors
 mod theme {
     use eframe::egui::Color32;
@@ -75,7 +81,7 @@ struct Transfer {
 }
 
 struct RQuickShareApp {
-    rx: mpsc::Receiver<ChannelMessage>,
+    rx: mpsc::Receiver<GuiMessage>,
     cmd_tx: Option<broadcast::Sender<ChannelMessage>>,
     send_tx: Option<tokio::sync::mpsc::Sender<SendInfo>>,
     transfers: Vec<Transfer>,
@@ -105,11 +111,34 @@ impl RQuickShareApp {
                     Ok((sender_file, _ble_receiver)) => {
                         drop(init_tx.send((message_sender, sender_file)));
 
+                        // Start device discovery
+                        let (endpoint_tx, mut endpoint_rx) = broadcast::channel::<EndpointInfo>(50);
+                        if let Err(e) = rqs.discovery(endpoint_tx) {
+                            log::error!("Failed to start discovery: {e}");
+                        }
+
+                        // Clone tx for the endpoint receiver task
+                        let tx_endpoint = tx.clone();
+                        let ctx_endpoint = ctx.clone();
+                        tokio::spawn(async move {
+                            loop {
+                                match endpoint_rx.recv().await {
+                                    Ok(endpoint) => {
+                                        drop(tx_endpoint.send(GuiMessage::Endpoint(endpoint)));
+                                        ctx_endpoint.request_repaint();
+                                    }
+                                    Err(broadcast::error::RecvError::Closed) => break,
+                                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                }
+                            }
+                        });
+
+                        // Main message loop
                         loop {
                             match receiver.recv().await {
                                 Ok(msg) => {
                                     if let Message::Client(_) = &msg.msg {
-                                        drop(tx.send(msg));
+                                        drop(tx.send(GuiMessage::Channel(msg)));
                                         ctx.request_repaint();
                                     }
                                 }
@@ -144,38 +173,55 @@ impl RQuickShareApp {
     }
 
     fn process_messages(&mut self) {
-        while let Ok(msg) = self.rx.try_recv() {
-            if let Message::Client(client) = &msg.msg {
-                let state = client.state.clone().unwrap_or(TransferState::Initial);
+        while let Ok(gui_msg) = self.rx.try_recv() {
+            match gui_msg {
+                GuiMessage::Channel(msg) => {
+                    if let Message::Client(client) = &msg.msg {
+                        let state = client.state.clone().unwrap_or(TransferState::Initial);
 
-                if let Some(transfer) = self.transfers.iter_mut().find(|t| t.id == msg.id) {
-                    transfer.state = state.clone();
-                    if let Some(meta) = &client.metadata {
-                        transfer.total_bytes = meta.total_bytes;
-                        transfer.ack_bytes = meta.ack_bytes;
-                    }
-                    if matches!(state, TransferState::Finished | TransferState::Cancelled | TransferState::Rejected) {
-                        transfer.state = state;
-                    }
-                } else if let Some(meta) = &client.metadata {
-                    let file_names = meta.payload.as_ref().map_or_else(Vec::new, |p| {
-                        match p {
-                            rqs::hdl::info::TransferPayload::Files(files) => files.clone(),
-                            rqs::hdl::info::TransferPayload::Text(t) => vec![format!("Text: {}", t.chars().take(50).collect::<String>())],
-                            rqs::hdl::info::TransferPayload::Url(u) => vec![format!("URL: {u}")],
-                            rqs::hdl::info::TransferPayload::Wifi { ssid, .. } => vec![format!("WiFi: {ssid}")],
+                        if let Some(transfer) = self.transfers.iter_mut().find(|t| t.id == msg.id) {
+                            transfer.state = state.clone();
+                            if let Some(meta) = &client.metadata {
+                                transfer.total_bytes = meta.total_bytes;
+                                transfer.ack_bytes = meta.ack_bytes;
+                            }
+                            if matches!(state, TransferState::Finished | TransferState::Cancelled | TransferState::Rejected) {
+                                transfer.state = state;
+                            }
+                        } else if let Some(meta) = &client.metadata {
+                            let file_names = meta.payload.as_ref().map_or_else(Vec::new, |p| {
+                                match p {
+                                    rqs::hdl::info::TransferPayload::Files(files) => files.clone(),
+                                    rqs::hdl::info::TransferPayload::Text(t) => vec![format!("Text: {}", t.chars().take(50).collect::<String>())],
+                                    rqs::hdl::info::TransferPayload::Url(u) => vec![format!("URL: {u}")],
+                                    rqs::hdl::info::TransferPayload::Wifi { ssid, .. } => vec![format!("WiFi: {ssid}")],
+                                }
+                            });
+
+                            self.transfers.push(Transfer {
+                                id: msg.id.clone(),
+                                device_name: meta.source.as_ref().map_or_else(|| "Unknown".to_string(), |s| s.name.clone()),
+                                file_names,
+                                pin_code: meta.pin_code.clone(),
+                                state,
+                                total_bytes: meta.total_bytes,
+                                ack_bytes: meta.ack_bytes,
+                            });
                         }
-                    });
-
-                    self.transfers.push(Transfer {
-                        id: msg.id.clone(),
-                        device_name: meta.source.as_ref().map_or_else(|| "Unknown".to_string(), |s| s.name.clone()),
-                        file_names,
-                        pin_code: meta.pin_code.clone(),
-                        state,
-                        total_bytes: meta.total_bytes,
-                        ack_bytes: meta.ack_bytes,
-                    });
+                    }
+                }
+                GuiMessage::Endpoint(endpoint) => {
+                    // If endpoint has no name, it's a removal notification
+                    if endpoint.name.is_none() || endpoint.present == Some(false) {
+                        self.endpoints.retain(|e| e.id != endpoint.id);
+                    } else {
+                        // Update existing or add new endpoint
+                        if let Some(existing) = self.endpoints.iter_mut().find(|e| e.id == endpoint.id) {
+                            *existing = endpoint;
+                        } else {
+                            self.endpoints.push(endpoint);
+                        }
+                    }
                 }
             }
         }

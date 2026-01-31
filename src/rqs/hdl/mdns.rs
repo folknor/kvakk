@@ -1,7 +1,9 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use tokio::sync::broadcast::Receiver;
+use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 
 use crate::utils::{gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
@@ -64,6 +66,7 @@ pub struct MDnsServer {
     daemon: ServiceDaemon,
     service_info: ServiceInfo,
     ble_receiver: Receiver<()>,
+    registered: bool,
 }
 
 impl MDnsServer {
@@ -78,16 +81,24 @@ impl MDnsServer {
             daemon: ServiceDaemon::new()?,
             service_info,
             ble_receiver,
+            registered: false,
         })
     }
 
     pub async fn run(&mut self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
-        info!("{INNER_NAME}: service starting");
         let monitor = self.daemon.monitor()?;
         let ble_receiver = &mut self.ble_receiver;
 
-        // Always register - this fork is always visible
+        // Register the mDNS service
         self.daemon.register(self.service_info.clone())?;
+        self.registered = true;
+        info!("{INNER_NAME}: service registered and running");
+
+        // Periodic re-announcement interval (every 5 seconds for first 30 seconds, then stop)
+        // This helps Android devices discover us even if they started looking before we registered
+        let mut reannounce_interval = interval(Duration::from_secs(5));
+        let mut reannounce_count = 0u8;
+        const MAX_REANNOUNCEMENTS: u8 = 6; // 30 seconds of re-announcements
 
         loop {
             tokio::select! {
@@ -102,22 +113,44 @@ impl MDnsServer {
                     }
                 },
                 _ = ble_receiver.recv() => {
-                    debug!("{INNER_NAME}: ble_receiver: got event");
+                    debug!("{INNER_NAME}: ble_receiver: got event, re-announcing");
                     // Android can sometimes not see the mDNS service if the service
                     // was running BEFORE Android started the Discovery phase for QuickShare.
                     // So resend a broadcast if there's an Android device sending.
+                    self.daemon.register(self.service_info.clone())?;
+                },
+                _ = reannounce_interval.tick(), if reannounce_count < MAX_REANNOUNCEMENTS => {
+                    reannounce_count += 1;
+                    debug!("{INNER_NAME}: periodic re-announcement {reannounce_count}/{MAX_REANNOUNCEMENTS}");
                     self.daemon.register(self.service_info.clone())?;
                 },
             }
         }
 
         // Unregister the mDNS service - we're shutting down
-        let receiver = self.daemon.unregister(self.service_info.get_fullname())?;
-        if let Ok(event) = receiver.recv() {
-            info!("MDnsServer: service unregistered: {:?}", &event);
-        }
+        self.unregister_service();
 
         Ok(())
+    }
+
+    /// Unregister the mDNS service and wait for confirmation
+    fn unregister_service(&mut self) {
+        if !self.registered {
+            return;
+        }
+        self.registered = false;
+
+        match self.daemon.unregister(self.service_info.get_fullname()) {
+            Ok(receiver) => {
+                // Wait for unregister confirmation (with timeout via recv)
+                if let Ok(event) = receiver.recv() {
+                    info!("{INNER_NAME}: service unregistered: {:?}", &event);
+                }
+            }
+            Err(e) => {
+                warn!("{INNER_NAME}: failed to unregister service: {e}");
+            }
+        }
     }
 
     fn build_service(
@@ -168,5 +201,13 @@ impl MDnsServer {
         si.set_interfaces(vec![IfKind::IPv4]);
 
         Ok(si)
+    }
+}
+
+impl Drop for MDnsServer {
+    fn drop(&mut self) {
+        // Ensure service is unregistered when MDnsServer is dropped
+        // This sends a "goodbye" packet so other devices know we're gone
+        self.unregister_service();
     }
 }

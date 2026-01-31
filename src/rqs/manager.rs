@@ -177,7 +177,10 @@ impl TcpServer {
                                     break;
                                 }
 
-                                if or.state.state != TransferState::Finished && or.state.state != TransferState::Cancelled {
+                                if or.state.state == TransferState::Finished || or.state.state == TransferState::Cancelled {
+                                    // Connection closed after transfer completed - this is normal
+                                    debug!("{INNER_NAME}: connection closed after transfer ({:?})", or.state.state);
+                                } else {
                                     drop(self.sender.clone().send(ChannelMessage {
                                         id: si.addr,
                                         msg: channel::Message::Client(MessageClient {
@@ -186,8 +189,8 @@ impl TcpServer {
                                             metadata: Default::default()
                                         }),
                                     }));
+                                    error!("{INNER_NAME}: error while handling client: {e} ({:?})", or.state.state);
                                 }
-                                error!("{INNER_NAME}: error while handling client: {e} ({:?})", or.state.state);
                                 break;
                             }
                         }

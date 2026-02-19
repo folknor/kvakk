@@ -2,7 +2,8 @@
 extern crate log;
 
 use std::path::PathBuf;
-use std::sync::{LazyLock, RwLock};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, LazyLock, RwLock};
 
 use anyhow::anyhow;
 use channel::ChannelMessage;
@@ -53,6 +54,11 @@ static DEVICE_NAME: LazyLock<RwLock<String>> = LazyLock::new(|| {
     )
 });
 
+/// BLE status: 0 = initializing, 1 = active, 2 = unavailable
+pub const BLE_INITIALIZING: u8 = 0;
+pub const BLE_ACTIVE: u8 = 1;
+pub const BLE_UNAVAILABLE: u8 = 2;
+
 #[derive(Debug)]
 pub struct RQS {
     tracker: Option<TaskTracker>,
@@ -67,6 +73,8 @@ pub struct RQS {
     pub port_number: Option<u32>,
 
     pub message_sender: broadcast::Sender<ChannelMessage>,
+
+    pub ble_status: Arc<AtomicU8>,
 }
 
 impl Default for RQS {
@@ -103,6 +111,7 @@ impl RQS {
             ble_sender,
             port_number,
             message_sender,
+            ble_status: Arc::new(AtomicU8::new(BLE_INITIALIZING)),
         }
     }
 
@@ -137,12 +146,22 @@ impl RQS {
         let ctk = ctoken.clone();
         tracker.spawn(async move { server.run(ctk).await });
 
-        if let Ok(ble) = BleListener::new(self.ble_sender.clone())
-            .await
-            .inspect_err(|err| warn!("BleListener: {err}"))
         {
+            let ble_sender = self.ble_sender.clone();
+            let ble_status = self.ble_status.clone();
             let ctk = ctoken.clone();
-            tracker.spawn(async move { ble.run(ctk).await });
+            tracker.spawn(async move {
+                match BleListener::new(ble_sender).await {
+                    Ok(ble) => {
+                        ble_status.store(BLE_ACTIVE, Ordering::Relaxed);
+                        let _ = ble.run(ctk).await;
+                    }
+                    Err(err) => {
+                        ble_status.store(BLE_UNAVAILABLE, Ordering::Relaxed);
+                        warn!("BleListener: {err}");
+                    }
+                }
+            });
         }
 
         // Start MDnsServer in own "task"

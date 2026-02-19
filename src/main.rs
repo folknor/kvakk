@@ -1,6 +1,8 @@
 //! Kvakk - Quick Share for Linux
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 use eframe::egui;
@@ -92,6 +94,8 @@ struct KvakkApp {
     received_files: Vec<ReceivedFile>,
     outbound: Option<OutboundTransfer>,
     inbound: Option<InboundTransfer>,
+    network_ok: bool,
+    ble_status: Arc<AtomicU8>,
 }
 
 impl KvakkApp {
@@ -102,6 +106,7 @@ impl KvakkApp {
             broadcast::Sender<ChannelMessage>,
             tokio::sync::mpsc::Sender<SendInfo>,
             String,
+            Arc<AtomicU8>,
         )>();
 
         let ctx = cc.egui_ctx.clone();
@@ -113,10 +118,11 @@ impl KvakkApp {
                 let device_name = rqs.get_device_name();
                 let message_sender = rqs.message_sender.clone();
                 let mut receiver = rqs.message_sender.subscribe();
+                let ble_status = rqs.ble_status.clone();
 
                 match rqs.run().await {
                     Ok((sender_file, _ble_receiver)) => {
-                        drop(init_tx.send((message_sender, sender_file, device_name)));
+                        drop(init_tx.send((message_sender, sender_file, device_name, ble_status)));
 
                         // Start device discovery
                         let (endpoint_tx, mut endpoint_rx) = broadcast::channel::<EndpointInfo>(50);
@@ -161,10 +167,10 @@ impl KvakkApp {
             });
         });
 
-        let (cmd_tx, send_tx, device_name) = init_rx
+        let (cmd_tx, send_tx, device_name, network_ok, ble_status) = init_rx
             .recv()
-            .map(|(cmd, send, name)| (Some(cmd), Some(send), name))
-            .unwrap_or((None, None, "Unknown".to_string()));
+            .map(|(cmd, send, name, ble)| (Some(cmd), Some(send), name, true, ble))
+            .unwrap_or((None, None, "Unknown".to_string(), false, Arc::new(AtomicU8::new(rqs::BLE_UNAVAILABLE))));
 
         Self {
             device_name,
@@ -176,6 +182,8 @@ impl KvakkApp {
             received_files: Vec::new(),
             outbound: None,
             inbound: None,
+            network_ok,
+            ble_status,
         }
     }
 
@@ -447,6 +455,32 @@ impl KvakkApp {
         if title_bar_response.drag_started_by(egui::PointerButton::Primary) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
+
+        // Status LEDs on the left
+        let led_radius = 4.0;
+        let led_y = title_bar_rect.center().y;
+
+        // Network LED
+        let net_color = if self.network_ok { theme::GREEN } else { theme::RED };
+        let net_center = egui::pos2(title_bar_rect.left() + 16.0, led_y);
+        ui.painter().circle_filled(net_center, led_radius, net_color);
+        let net_rect = egui::Rect::from_center_size(net_center, egui::vec2(14.0, 14.0));
+        let net_tip = if self.network_ok { "Network: active" } else { "Network: unavailable" };
+        ui.interact(net_rect, egui::Id::new("net_led"), egui::Sense::hover())
+            .on_hover_text(net_tip);
+
+        // BLE LED
+        let ble = self.ble_status.load(Ordering::Relaxed);
+        let (ble_color, ble_tip) = match ble {
+            rqs::BLE_ACTIVE => (theme::GREEN, "Bluetooth: active"),
+            rqs::BLE_UNAVAILABLE => (theme::RED, "Bluetooth: unavailable"),
+            _ => (egui::Color32::from_rgb(249, 226, 175), "Bluetooth: initializing..."),
+        };
+        let ble_center = egui::pos2(title_bar_rect.left() + 30.0, led_y);
+        ui.painter().circle_filled(ble_center, led_radius, ble_color);
+        let ble_rect = egui::Rect::from_center_size(ble_center, egui::vec2(14.0, 14.0));
+        ui.interact(ble_rect, egui::Id::new("ble_led"), egui::Sense::hover())
+            .on_hover_text(ble_tip);
 
         // Draw title text
         ui.painter().text(

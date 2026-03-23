@@ -19,7 +19,7 @@ prost-build = "0.14"
 bluer = { version = "0.17", features = ["bluetoothd"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Devices_Bluetooth_Advertisement",
     "Storage_Streams",
 ] }
@@ -31,7 +31,7 @@ dbus = { version = "0.9", features = ["vendored"] }
 # Core library dependencies
 anyhow = "1.0"
 base64 = "0.22"
-btleplug = "0.11"
+btleplug = "0.12"
 bytes = "1.11"
 directories = "6.0"
 futures = "0.3"
@@ -43,12 +43,12 @@ hostname = "0.4"
 libaes = "0.7"
 localsend-rs = { version = "0.1", default-features = false }
 log = "0.4"
-mdns-sd = "0.17"
+mdns-sd = "0.18"
 mime_guess = "2.0"
 num-bigint = "0.4"
 p256 = { version = "0.13", features = ["ecdh"] }
 prost = "0.14"
-rand = "0.9"
+rand = "0.10"
 sha2 = "0.10"
 uuid = "1.20"
 zeroize = "1.8"

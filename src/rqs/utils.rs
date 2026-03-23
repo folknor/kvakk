@@ -14,7 +14,7 @@ use num_bigint::{BigUint, ToBigInt};
 use p256::elliptic_curve::rand_core::OsRng;
 use p256::{PublicKey, SecretKey};
 use rand::distr::Alphanumeric;
-use rand::{Rng, RngCore};
+use rand::{Rng, RngExt};
 use sha2::Sha256;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;

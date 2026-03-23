@@ -47,6 +47,13 @@ fn is_valid_quickshare_service(fullname: &str) -> bool {
     decoded[5..8] == SERVICE_ID
 }
 
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum TransferProtocol {
+    #[default]
+    QuickShare,
+    LocalSend,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct EndpointInfo {
     pub fullname: String,
@@ -56,6 +63,11 @@ pub struct EndpointInfo {
     pub port: Option<String>,
     pub rtype: Option<DeviceType>,
     pub present: Option<bool>,
+    pub protocol: TransferProtocol,
+    /// LocalSend fingerprint for device identity
+    pub fingerprint: Option<String>,
+    /// LocalSend HTTP protocol (http/https)
+    pub ls_protocol: Option<String>,
 }
 
 pub struct MDnsDiscovery {
@@ -137,6 +149,7 @@ impl MDnsDiscovery {
                                             port: Some(port.to_string()),
                                             rtype: Some(dt),
                                             present: Some(true),
+                                            ..Default::default()
                                         };
                                         info!("ServiceResolved: Resolved a new service: {ei:?}");
                                         cache.insert(fullname.clone(), ei.clone());

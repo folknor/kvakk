@@ -7,8 +7,8 @@ use std::thread;
 
 use eframe::egui;
 use rqs::channel::{ChannelMessage, Message, TransferAction};
-use rqs::hdl::{EndpointInfo, TransferState};
-use rqs::{OutboundPayload, SendInfo, RQS};
+use rqs::hdl::{EndpointInfo, TransferProtocol, TransferState};
+use rqs::{LocalSendSendInfo, OutboundPayload, SendInfo, RQS};
 use tokio::sync::broadcast;
 
 /// Message types for the GUI channel
@@ -90,6 +90,7 @@ struct KvakkApp {
     rx: mpsc::Receiver<GuiMessage>,
     cmd_tx: Option<broadcast::Sender<ChannelMessage>>,
     send_tx: Option<tokio::sync::mpsc::Sender<SendInfo>>,
+    ls_send_tx: Option<tokio::sync::mpsc::Sender<LocalSendSendInfo>>,
     endpoints: Vec<EndpointInfo>,
     received_files: Vec<ReceivedFile>,
     outbound: Option<OutboundTransfer>,
@@ -105,6 +106,7 @@ impl KvakkApp {
         let (init_tx, init_rx) = std::sync::mpsc::channel::<(
             broadcast::Sender<ChannelMessage>,
             tokio::sync::mpsc::Sender<SendInfo>,
+            tokio::sync::mpsc::Sender<LocalSendSendInfo>,
             String,
             Arc<AtomicU8>,
         )>();
@@ -121,8 +123,8 @@ impl KvakkApp {
                 let ble_status = rqs.ble_status.clone();
 
                 match rqs.run().await {
-                    Ok((sender_file, _ble_receiver)) => {
-                        drop(init_tx.send((message_sender, sender_file, device_name, ble_status)));
+                    Ok((sender_file, ls_sender, _ble_receiver)) => {
+                        drop(init_tx.send((message_sender, sender_file, ls_sender, device_name, ble_status)));
 
                         // Start device discovery
                         let (endpoint_tx, mut endpoint_rx) = broadcast::channel::<EndpointInfo>(50);
@@ -167,10 +169,10 @@ impl KvakkApp {
             });
         });
 
-        let (cmd_tx, send_tx, device_name, network_ok, ble_status) = init_rx
+        let (cmd_tx, send_tx, ls_send_tx, device_name, network_ok, ble_status) = init_rx
             .recv()
-            .map(|(cmd, send, name, ble)| (Some(cmd), Some(send), name, true, ble))
-            .unwrap_or((None, None, "Unknown".to_string(), false, Arc::new(AtomicU8::new(rqs::BLE_UNAVAILABLE))));
+            .map(|(cmd, send, ls_send, name, ble)| (Some(cmd), Some(send), Some(ls_send), name, true, ble))
+            .unwrap_or((None, None, None, "Unknown".to_string(), false, Arc::new(AtomicU8::new(rqs::BLE_UNAVAILABLE))));
 
         Self {
             device_name,
@@ -178,6 +180,7 @@ impl KvakkApp {
             rx,
             cmd_tx,
             send_tx,
+            ls_send_tx,
             endpoints: Vec::new(),
             received_files: Vec::new(),
             outbound: None,
@@ -310,21 +313,47 @@ impl KvakkApp {
     }
 
     fn send_files_to(&self, endpoint: &EndpointInfo, files: Vec<String>) {
-        if let (Some(send_tx), Some(ip), Some(port)) = (&self.send_tx, &endpoint.ip, &endpoint.port) {
-            let info = SendInfo {
-                id: endpoint.id.clone(),
-                name: endpoint.name.clone().unwrap_or_else(|| "Unknown".to_string()),
-                addr: format!("{ip}:{port}"),
-                ob: OutboundPayload::Files(files),
-            };
-            let tx = send_tx.clone();
-            std::thread::spawn(move || {
-                if let Ok(rt) = tokio::runtime::Runtime::new() {
-                    rt.block_on(async {
-                        drop(tx.send(info).await);
+        match endpoint.protocol {
+            TransferProtocol::QuickShare => {
+                if let (Some(send_tx), Some(ip), Some(port)) = (&self.send_tx, &endpoint.ip, &endpoint.port) {
+                    let info = SendInfo {
+                        id: endpoint.id.clone(),
+                        name: endpoint.name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                        addr: format!("{ip}:{port}"),
+                        ob: OutboundPayload::Files(files),
+                    };
+                    let tx = send_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Ok(rt) = tokio::runtime::Runtime::new() {
+                            rt.block_on(async {
+                                drop(tx.send(info).await);
+                            });
+                        }
                     });
                 }
-            });
+            }
+            TransferProtocol::LocalSend => {
+                if let (Some(ls_tx), Some(ip), Some(port)) = (&self.ls_send_tx, &endpoint.ip, &endpoint.port) {
+                    let port: u16 = port.parse().unwrap_or(53317);
+                    let info = LocalSendSendInfo {
+                        id: endpoint.id.clone(),
+                        name: endpoint.name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                        ip: ip.clone(),
+                        port,
+                        ls_protocol: endpoint.ls_protocol.clone().unwrap_or_else(|| "http".to_string()),
+                        fingerprint: endpoint.fingerprint.clone().unwrap_or_default(),
+                        files,
+                    };
+                    let tx = ls_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Ok(rt) = tokio::runtime::Runtime::new() {
+                            rt.block_on(async {
+                                drop(tx.send(info).await);
+                            });
+                        }
+                    });
+                }
+            }
         }
     }
 

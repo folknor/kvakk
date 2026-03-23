@@ -27,6 +27,11 @@ mod mdns;
 pub use mdns::*;
 mod outbound;
 pub use outbound::*;
+mod localsend_discovery;
+pub use localsend_discovery::*;
+mod localsend_server;
+pub use localsend_server::*;
+pub mod localsend_send;
 
 use serde::{Deserialize, Serialize};
 

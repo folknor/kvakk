@@ -41,6 +41,7 @@ hkdf = "0.12"
 hmac = "0.12"
 hostname = "0.4"
 libaes = "0.7"
+localsend-rs = { version = "0.1", default-features = false }
 log = "0.4"
 mdns-sd = "0.17"
 mime_guess = "2.0"

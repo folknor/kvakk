@@ -1,27 +1,31 @@
 # Kvakk
 
-Send and receive files with Android devices on your local network using Quick Share.
+Send and receive files with nearby devices on your local network using Quick Share and LocalSend.
+
+- **Quick Share** — Android devices
+- **LocalSend** — iOS, macOS, Windows, Linux, and anything running the LocalSend app
+
+Runs on Linux and Windows.
 
 ## How It Works
 
 Kvakk is **always visible** to nearby devices on the same network. Unlike the official Quick Share apps which have visibility modes (Everyone, Contacts, Hidden), this app:
 
-- **Always advertises** itself via mDNS on the local network
+- **Always advertises** itself via mDNS, BLE, and LocalSend multicast
 - **Anyone nearby** can see your device and send files to you
-- **No contact restrictions** - works with any Quick Share compatible device
-- **Manual acceptance required** - you must click Accept/Decline for incoming transfers
+- **No contact restrictions** - works with any compatible device
+- **Auto-accepts** all incoming transfers — no confirmation dialogs
+- **Unified device grid** — Quick Share and LocalSend devices appear side by side
 
 ### Sending Files
 
-1. Click on a discovered device
+1. Click on a discovered device (Quick Share or LocalSend)
 2. Select files to send
 3. Wait for the recipient to accept
 
 ### Receiving Files
 
-1. When someone sends files to you, an acceptance dialog appears
-2. Review the sender and files, then Accept or Decline
-3. Accepted files are saved to `~/Downloads` (or `~/Dropbox/Downloads` if it exists)
+Files are automatically accepted and saved to your Downloads folder.
 
 ## Security Considerations
 
@@ -29,7 +33,6 @@ Because this app is always discoverable:
 
 - Only run it on trusted networks (home, office)
 - Be cautious on public WiFi - anyone nearby can see your device name
-- Always verify the sender before accepting files
 
 ## Building
 
@@ -37,15 +40,16 @@ Because this app is always discoverable:
 cargo build --release
 ```
 
-The binary will be at `target/release/kvakk`.
-
 ## Requirements
 
 - Desktop OS with GUI support (uses egui)
 - Network access for mDNS discovery
+- Bluetooth adapter (optional, for BLE discovery)
 
 ## Related Projects
 
 - [phoepsilonix/rquickshare](https://github.com/phoepsilonix/rquickshare) - This fork's origin
 - [Martichou/rquickshare](https://github.com/Martichou/rquickshare) - Original Rust implementation
 - [grishka/NearDrop](https://github.com/grishka/NearDrop) - Quick Share for macOS
+- [localsend/localsend](https://github.com/localsend/localsend) - LocalSend official app
+- [CrossCopy/localsend-rs](https://github.com/CrossCopy/localsend-rs) - Rust LocalSend library used by Kvakk

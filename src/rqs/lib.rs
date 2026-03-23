@@ -17,6 +17,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::hdl::BleListener;
 use crate::hdl::MDnsServer;
+use crate::hdl::{LocalSendDiscoveryBridge, LocalSendServerBridge};
 use crate::manager::TcpServer;
 
 pub mod channel;
@@ -25,9 +26,13 @@ pub mod hdl;
 pub mod manager;
 pub mod utils;
 
-pub use hdl::{EndpointInfo, OutboundPayload, TransferState};
+pub use hdl::{EndpointInfo, OutboundPayload, TransferProtocol, TransferState};
+pub use hdl::localsend_send::LocalSendSendInfo;
 pub use manager::SendInfo;
 pub use utils::DeviceType;
+
+/// Default LocalSend port
+const LOCALSEND_PORT: u16 = 53317;
 
 pub mod sharing_nearby {
     include!(concat!(env!("OUT_DIR"), "/sharing.nearby.rs"));
@@ -117,7 +122,7 @@ impl RQS {
 
     pub async fn run(
         &mut self,
-    ) -> Result<(mpsc::Sender<SendInfo>, broadcast::Receiver<()>), anyhow::Error> {
+    ) -> Result<(mpsc::Sender<SendInfo>, mpsc::Sender<LocalSendSendInfo>, broadcast::Receiver<()>), anyhow::Error> {
         let tracker = TaskTracker::new();
         let ctoken = CancellationToken::new();
         self.tracker = Some(tracker.clone());
@@ -173,9 +178,37 @@ impl RQS {
         let ctk = ctoken.clone();
         tracker.spawn(async move { mdns.run(ctk).await });
 
+        // Start LocalSend HTTP server for receiving files
+        let device_name = self.get_device_name();
+        let save_dir = utils::get_download_dir();
+        match LocalSendServerBridge::new(device_name.clone(), LOCALSEND_PORT, save_dir) {
+            Ok(mut ls_server) => {
+                let msg_sender = self.message_sender.clone();
+                let ctk = ctoken.clone();
+                if let Err(e) = ls_server.start(msg_sender, ctk).await {
+                    warn!("LocalSendServer failed to start: {e}");
+                } else {
+                    info!("LocalSendServer started on port {LOCALSEND_PORT}");
+                }
+            }
+            Err(e) => warn!("LocalSendServer init failed: {e}"),
+        }
+
+        // Start LocalSend sender task
+        let ls_send_channel = mpsc::channel(10);
+        {
+            let msg_sender = self.message_sender.clone();
+            let ctk = ctoken.clone();
+            let alias = device_name;
+            let rx = ls_send_channel.1;
+            tracker.spawn(async move {
+                hdl::localsend_send::run_localsend_sender(rx, alias, msg_sender, ctk).await;
+            });
+        }
+
         tracker.close();
 
-        Ok((send_channel.0, self.ble_sender.subscribe()))
+        Ok((send_channel.0, ls_send_channel.0, self.ble_sender.subscribe()))
     }
 
     pub fn discovery(
@@ -208,8 +241,21 @@ impl RQS {
             });
         }
 
-        let discovery = MDnsDiscovery::new(sender)?;
-        tracker.spawn(async move { discovery.run(ctk.clone()).await });
+        let discovery = MDnsDiscovery::new(sender.clone())?;
+        let ctk_mdns = ctk.clone();
+        tracker.spawn(async move { discovery.run(ctk_mdns).await });
+
+        // Start LocalSend multicast discovery
+        {
+            let device_name = self.get_device_name();
+            let ls_discovery = LocalSendDiscoveryBridge::new(
+                device_name,
+                LOCALSEND_PORT,
+                sender,
+            );
+            let ctk_ls = ctk.clone();
+            tracker.spawn(async move { ls_discovery.run(ctk_ls).await });
+        }
 
         Ok(())
     }

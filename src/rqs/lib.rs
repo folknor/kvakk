@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use anyhow::anyhow;
 use channel::ChannelMessage;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use hdl::BleAdvertiser;
 use hdl::MDnsDiscovery;
 use tokio::net::TcpListener;
@@ -190,7 +190,7 @@ impl RQS {
         let ctk = CancellationToken::new();
         self.discovery_ctk = Some(ctk.clone());
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let ctk_blea = ctk.clone();
             tracker.spawn(async move {

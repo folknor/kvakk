@@ -14,6 +14,10 @@ pub use ble::*;
 mod blea;
 #[cfg(target_os = "linux")]
 pub use blea::*;
+#[cfg(target_os = "windows")]
+mod blea_windows;
+#[cfg(target_os = "windows")]
+pub use blea_windows::*;
 mod inbound;
 pub use inbound::*;
 pub mod info;

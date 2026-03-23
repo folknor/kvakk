@@ -97,6 +97,7 @@ struct KvakkApp {
     inbound: Option<InboundTransfer>,
     network_ok: bool,
     ble_status: Arc<AtomicU8>,
+    localsend_ok: bool,
 }
 
 impl KvakkApp {
@@ -109,6 +110,7 @@ impl KvakkApp {
             tokio::sync::mpsc::Sender<LocalSendSendInfo>,
             String,
             Arc<AtomicU8>,
+            bool,
         )>();
 
         let ctx = cc.egui_ctx.clone();
@@ -123,8 +125,8 @@ impl KvakkApp {
                 let ble_status = rqs.ble_status.clone();
 
                 match rqs.run().await {
-                    Ok((sender_file, ls_sender, _ble_receiver)) => {
-                        drop(init_tx.send((message_sender, sender_file, ls_sender, device_name, ble_status)));
+                    Ok((sender_file, ls_sender, _ble_receiver, ls_ok)) => {
+                        drop(init_tx.send((message_sender, sender_file, ls_sender, device_name, ble_status, ls_ok)));
 
                         // Start device discovery
                         let (endpoint_tx, mut endpoint_rx) = broadcast::channel::<EndpointInfo>(50);
@@ -169,10 +171,10 @@ impl KvakkApp {
             });
         });
 
-        let (cmd_tx, send_tx, ls_send_tx, device_name, network_ok, ble_status) = init_rx
+        let (cmd_tx, send_tx, ls_send_tx, device_name, network_ok, ble_status, localsend_ok) = init_rx
             .recv()
-            .map(|(cmd, send, ls_send, name, ble)| (Some(cmd), Some(send), Some(ls_send), name, true, ble))
-            .unwrap_or((None, None, None, "Unknown".to_string(), false, Arc::new(AtomicU8::new(rqs::BLE_UNAVAILABLE))));
+            .map(|(cmd, send, ls_send, name, ble, ls_ok)| (Some(cmd), Some(send), Some(ls_send), name, true, ble, ls_ok))
+            .unwrap_or((None, None, None, "Unknown".to_string(), false, Arc::new(AtomicU8::new(rqs::BLE_UNAVAILABLE)), false));
 
         Self {
             device_name,
@@ -187,6 +189,7 @@ impl KvakkApp {
             inbound: None,
             network_ok,
             ble_status,
+            localsend_ok,
         }
     }
 
@@ -510,6 +513,15 @@ impl KvakkApp {
         let ble_rect = egui::Rect::from_center_size(ble_center, egui::vec2(14.0, 14.0));
         ui.interact(ble_rect, egui::Id::new("ble_led"), egui::Sense::hover())
             .on_hover_text(ble_tip);
+
+        // LocalSend LED
+        let ls_color = if self.localsend_ok { theme::GREEN } else { theme::RED };
+        let ls_tip = if self.localsend_ok { "LocalSend: active" } else { "LocalSend: unavailable" };
+        let ls_center = egui::pos2(title_bar_rect.left() + 44.0, led_y);
+        ui.painter().circle_filled(ls_center, led_radius, ls_color);
+        let ls_rect = egui::Rect::from_center_size(ls_center, egui::vec2(14.0, 14.0));
+        ui.interact(ls_rect, egui::Id::new("ls_led"), egui::Sense::hover())
+            .on_hover_text(ls_tip);
 
         // Draw title text
         ui.painter().text(

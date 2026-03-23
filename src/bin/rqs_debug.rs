@@ -19,7 +19,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let sender = rqs.message_sender.clone();
 
     // Start the service
-    let (_sender_file, _ls_sender, _ble_receiver) = rqs.run().await?;
+    let (_sender_file, _ls_sender, _ble_receiver, _ls_ok) = rqs.run().await?;
 
     println!("RQS server running. Press Ctrl+C to stop.");
     println!("All incoming transfers will be AUTO-ACCEPTED.\n");

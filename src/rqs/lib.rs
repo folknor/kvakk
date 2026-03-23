@@ -122,7 +122,7 @@ impl RQS {
 
     pub async fn run(
         &mut self,
-    ) -> Result<(mpsc::Sender<SendInfo>, mpsc::Sender<LocalSendSendInfo>, broadcast::Receiver<()>), anyhow::Error> {
+    ) -> Result<(mpsc::Sender<SendInfo>, mpsc::Sender<LocalSendSendInfo>, broadcast::Receiver<()>, bool), anyhow::Error> {
         let tracker = TaskTracker::new();
         let ctoken = CancellationToken::new();
         self.tracker = Some(tracker.clone());
@@ -181,6 +181,7 @@ impl RQS {
         // Start LocalSend HTTP server for receiving files
         let device_name = self.get_device_name();
         let save_dir = utils::get_download_dir();
+        let mut localsend_ok = false;
         match LocalSendServerBridge::new(device_name.clone(), LOCALSEND_PORT, save_dir) {
             Ok(mut ls_server) => {
                 let msg_sender = self.message_sender.clone();
@@ -189,6 +190,7 @@ impl RQS {
                     warn!("LocalSendServer failed to start: {e}");
                 } else {
                     info!("LocalSendServer started on port {LOCALSEND_PORT}");
+                    localsend_ok = true;
                 }
             }
             Err(e) => warn!("LocalSendServer init failed: {e}"),
@@ -208,7 +210,7 @@ impl RQS {
 
         tracker.close();
 
-        Ok((send_channel.0, ls_send_channel.0, self.ble_sender.subscribe()))
+        Ok((send_channel.0, ls_send_channel.0, self.ble_sender.subscribe(), localsend_ok))
     }
 
     pub fn discovery(

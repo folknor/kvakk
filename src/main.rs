@@ -122,7 +122,7 @@ impl KvakkApp {
                 let device_name = rqs.get_device_name();
                 let message_sender = rqs.message_sender.clone();
                 let mut receiver = rqs.message_sender.subscribe();
-                let ble_status = rqs.ble_status.clone();
+                let ble_status = Arc::clone(&rqs.ble_status);
 
                 match rqs.run().await {
                     Ok((sender_file, ls_sender, _ble_receiver, ls_ok)) => {

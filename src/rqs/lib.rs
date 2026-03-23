@@ -153,13 +153,13 @@ impl RQS {
 
         {
             let ble_sender = self.ble_sender.clone();
-            let ble_status = self.ble_status.clone();
+            let ble_status = Arc::clone(&self.ble_status);
             let ctk = ctoken.clone();
             tracker.spawn(async move {
                 match BleListener::new(ble_sender).await {
                     Ok(ble) => {
                         ble_status.store(BLE_ACTIVE, Ordering::Relaxed);
-                        let _ = ble.run(ctk).await;
+                        drop(ble.run(ctk).await);
                     }
                     Err(err) => {
                         ble_status.store(BLE_UNAVAILABLE, Ordering::Relaxed);

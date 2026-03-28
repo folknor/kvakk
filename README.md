@@ -7,6 +7,9 @@ Send and receive files with nearby devices on your local network using Quick Sha
 
 Runs on Linux and Windows.
 
+Built with LLMs. See [LLM.md](LLM.md).
+
+
 ## How It Works
 
 Kvakk is **always visible** to nearby devices on the same network. Unlike the official Quick Share apps which have visibility modes (Everyone, Contacts, Hidden), this app:

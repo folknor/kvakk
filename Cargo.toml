@@ -15,14 +15,23 @@ path = "src/main.rs"
 [build-dependencies]
 prost-build = "0.14"
 
+[target.'cfg(target_os = "linux")']
+dev-dependencies = {}
+
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", features = ["bluetoothd"] }
+
+[target.'cfg(target_os = "windows")']
+dev-dependencies = {}
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
     "Devices_Bluetooth_Advertisement",
     "Storage_Streams",
 ] }
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))']
+dev-dependencies = {}
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
 dbus = { version = "0.9", features = ["vendored"] }
@@ -34,22 +43,23 @@ base64 = "0.22"
 btleplug = "0.12"
 bytes = "1.11"
 directories = "6.0"
+display-info = "0.5"
 futures = "0.3"
 get_if_addrs = "0.5"
 hex = "0.4"
-hkdf = "0.12"
-hmac = "0.12"
+hkdf = "0.13.0"
+hmac = "0.13.0"
 hostname = "0.4"
 libaes = "0.7"
 localsend-rs = { version = "0.1", default-features = false }
 log = "0.4"
-mdns-sd = "0.18"
+mdns-sd = "0.19.0"
 mime_guess = "2.0"
 num-bigint = "0.4"
 p256 = { version = "0.13", features = ["ecdh"] }
 prost = "0.14"
 rand = "0.10"
-sha2 = "0.10"
+sha2 = "0.11.0"
 uuid = "1.20"
 zeroize = "1.8"
 

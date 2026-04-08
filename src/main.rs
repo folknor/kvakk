@@ -418,50 +418,58 @@ impl eframe::App for KvakkApp {
                 // Custom title bar
                 self.draw_title_bar(ui);
 
-                // Main content area with padding
-                egui::Frame::NONE
-                    .fill(theme::BASE)
-                    .inner_margin(16.0)
-                    .show(ui, |ui| {
-                        // HEADER
-                        ui.push_id("header", |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new(&self.device_name)
-                                    .size(18.0)
-                                    .strong()
-                                    .color(theme::TEXT));
+                if self.outbound.is_some() {
+                    // Send overlay covers everything below title bar
+                    let remaining = ui.available_size();
+                    egui::Frame::NONE
+                        .fill(theme::BASE)
+                        .inner_margin(16.0)
+                        .show(ui, |ui| {
+                            ui.set_min_size(remaining - egui::vec2(32.0, 32.0));
+                            self.draw_send_overlay(ui);
+                        });
+                } else {
+                    // Main content area with padding
+                    egui::Frame::NONE
+                        .fill(theme::BASE)
+                        .inner_margin(16.0)
+                        .show(ui, |ui| {
+                            // HEADER
+                            ui.push_id("header", |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(egui::RichText::new(&self.device_name)
+                                        .size(18.0)
+                                        .strong()
+                                        .color(theme::TEXT));
+                                });
+                            });
+                            ui.add_space(12.0);
+
+                            // DEVICE GRID (darker background)
+                            let footer_space = 40.0; // space for footer + margin
+                            let grid_height = ui.available_height() - footer_space;
+                            let content_height = grid_height - 32.0; // subtract inner_margin (16*2)
+
+                            ui.push_id("device_grid", |ui| {
+                                let full_width = ui.available_width();
+                                egui::Frame::NONE
+                                    .fill(theme::MANTLE)
+                                    .inner_margin(16.0)
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(full_width - 32.0);
+                                        ui.set_min_height(content_height);
+                                        ui.set_max_height(content_height);
+                                        self.draw_device_grid(ui);
+                                    });
+                            });
+
+                            // FOOTER
+                            ui.add_space(12.0);
+                            ui.push_id("footer", |ui| {
+                                self.draw_footer(ui);
                             });
                         });
-                        ui.add_space(12.0);
-
-                        // DEVICE GRID (darker background)
-                        let footer_space = 40.0; // space for footer + margin
-                        let grid_height = ui.available_height() - footer_space;
-                        let content_height = grid_height - 32.0; // subtract inner_margin (16*2)
-
-                        ui.push_id("device_grid", |ui| {
-                            let full_width = ui.available_width();
-                            egui::Frame::NONE
-                                .fill(theme::MANTLE)
-                                .inner_margin(16.0)
-                                .show(ui, |ui| {
-                                    ui.set_min_width(full_width - 32.0);
-                                    ui.set_min_height(content_height);
-                                    ui.set_max_height(content_height);
-                                    if self.outbound.is_some() {
-                                        self.draw_send_overlay(ui);
-                                    } else {
-                                        self.draw_device_grid(ui);
-                                    }
-                                });
-                        });
-
-                        // FOOTER
-                        ui.add_space(12.0);
-                        ui.push_id("footer", |ui| {
-                            self.draw_footer(ui);
-                        });
-                    });
+                }
             });
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -618,13 +626,13 @@ impl KvakkApp {
         let mut close_clicked = false;
 
         ui.vertical_centered(|ui| {
-            ui.add_space(16.0);
+            ui.add_space(40.0);
 
             // Device name
             ui.label(egui::RichText::new(format!("Sending to {device_name}"))
                 .size(16.0)
                 .color(theme::TEXT));
-            ui.add_space(12.0);
+            ui.add_space(20.0);
 
             // PIN code
             if let Some(pin) = &pin_code {
@@ -633,36 +641,34 @@ impl KvakkApp {
                     .size(32.0)
                     .strong()
                     .color(theme::MAUVE));
-                ui.add_space(12.0);
+                ui.add_space(20.0);
             }
-
-            // Status
-            let (status_text, status_color) = match &state {
-                TransferState::Finished => ("Transfer complete!", theme::GREEN),
-                TransferState::Cancelled => ("Cancelled", theme::OVERLAY0),
-                TransferState::Rejected => ("Rejected by receiver", theme::RED),
-                TransferState::Disconnected => ("Disconnected", theme::RED),
-                TransferState::SendingFiles => ("Sending...", theme::BLUE),
-                _ => ("Connecting...", theme::OVERLAY0),
-            };
-            ui.label(egui::RichText::new(status_text).size(14.0).color(status_color));
-            ui.add_space(8.0);
 
             // Progress bar
             ui.add(egui::ProgressBar::new(progress)
                 .show_percentage()
                 .fill(theme::BLUE));
+            ui.add_space(20.0);
 
-            // Close button (only when done)
             if is_done {
-                ui.add_space(12.0);
+                // Close button replaces status label when transfer is done
                 if ui.add(egui::Button::new(
                     egui::RichText::new("Close").color(theme::TEXT))
                     .fill(theme::SURFACE1)
-                    .min_size(egui::vec2(100.0, 32.0))
+                    .min_size(egui::vec2(100.0, 36.0))
                 ).clicked() {
                     close_clicked = true;
                 }
+            } else {
+                // Status label while transfer is in progress
+                let (status_text, status_color) = match &state {
+                    TransferState::Cancelled => ("Cancelled", theme::OVERLAY0),
+                    TransferState::Rejected => ("Rejected by receiver", theme::RED),
+                    TransferState::Disconnected => ("Disconnected", theme::RED),
+                    TransferState::SendingFiles => ("Sending...", theme::BLUE),
+                    _ => ("Connecting...", theme::OVERLAY0),
+                };
+                ui.label(egui::RichText::new(status_text).size(14.0).color(status_color));
             }
         });
 

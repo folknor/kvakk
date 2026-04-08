@@ -618,13 +618,13 @@ impl KvakkApp {
         let mut close_clicked = false;
 
         ui.vertical_centered(|ui| {
-            ui.add_space(40.0);
+            ui.add_space(16.0);
 
             // Device name
             ui.label(egui::RichText::new(format!("Sending to {device_name}"))
                 .size(16.0)
                 .color(theme::TEXT));
-            ui.add_space(20.0);
+            ui.add_space(12.0);
 
             // PIN code
             if let Some(pin) = &pin_code {
@@ -633,14 +633,8 @@ impl KvakkApp {
                     .size(32.0)
                     .strong()
                     .color(theme::MAUVE));
-                ui.add_space(20.0);
+                ui.add_space(12.0);
             }
-
-            // Progress bar
-            ui.add(egui::ProgressBar::new(progress)
-                .show_percentage()
-                .fill(theme::BLUE));
-            ui.add_space(20.0);
 
             // Status
             let (status_text, status_color) = match &state {
@@ -652,14 +646,20 @@ impl KvakkApp {
                 _ => ("Connecting...", theme::OVERLAY0),
             };
             ui.label(egui::RichText::new(status_text).size(14.0).color(status_color));
+            ui.add_space(8.0);
+
+            // Progress bar
+            ui.add(egui::ProgressBar::new(progress)
+                .show_percentage()
+                .fill(theme::BLUE));
 
             // Close button (only when done)
             if is_done {
-                ui.add_space(20.0);
+                ui.add_space(12.0);
                 if ui.add(egui::Button::new(
                     egui::RichText::new("Close").color(theme::TEXT))
                     .fill(theme::SURFACE1)
-                    .min_size(egui::vec2(100.0, 36.0))
+                    .min_size(egui::vec2(100.0, 32.0))
                 ).clicked() {
                     close_clicked = true;
                 }

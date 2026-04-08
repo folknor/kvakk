@@ -67,8 +67,6 @@ async fn handle_send(
         })
         .collect();
 
-    emit_initial(message_sender, &transfer_id, &info.name, file_names);
-
     let protocol: Protocol = info.ls_protocol.as_str().into();
     let target = build_target_device(&info, protocol);
     let client = LocalSendClient::new(build_local_device(device_alias));
@@ -81,6 +79,10 @@ async fn handle_send(
             return;
         }
     };
+
+    let total_bytes: u64 = files_meta.values().map(|m| m.size).sum();
+    let file_sizes: HashMap<FileId, u64> = files_meta.iter().map(|(id, m)| (id.clone(), m.size)).collect();
+    emit_initial(message_sender, &transfer_id, &info.name, file_names, total_bytes);
 
     // Prepare upload
     let upload_response = match client.prepare_upload(&target, files_meta, None).await {
@@ -99,12 +101,15 @@ async fn handle_send(
 
     emit_state(message_sender, &transfer_id, TransferState::SendingFiles);
 
-    // Upload each file
+    // Upload each file, tracking progress per completed file
+    let mut ack_bytes: u64 = 0;
     for (file_id, token) in &upload_response.files {
         let Some(path_str) = id_to_path.get(file_id) else {
             error!("{INNER_NAME}: no path for file_id {file_id}");
             continue;
         };
+
+        let file_size = file_sizes.get(file_id).copied().unwrap_or(0);
 
         if let Err(e) = client
             .upload_file(
@@ -121,9 +126,12 @@ async fn handle_send(
             emit_state(message_sender, &transfer_id, TransferState::Cancelled);
             return;
         }
+
+        ack_bytes += file_size;
+        emit_progress(message_sender, &transfer_id, total_bytes, ack_bytes);
     }
 
-    emit_state(message_sender, &transfer_id, TransferState::Finished);
+    emit_finished(message_sender, &transfer_id, total_bytes);
 }
 
 fn build_target_device(info: &LocalSendSendInfo, protocol: Protocol) -> DeviceInfo {
@@ -187,6 +195,7 @@ fn emit_initial(
     id: &str,
     device_name: &str,
     file_names: Vec<String>,
+    total_bytes: u64,
 ) {
     let metadata = TransferMetadata {
         id: id.to_string(),
@@ -198,7 +207,7 @@ fn emit_initial(
         payload_kind: TransferPayloadKind::Files,
         payload_preview: None,
         payload: Some(TransferPayload::Files(file_names)),
-        total_bytes: 0,
+        total_bytes,
         ack_bytes: 0,
     };
 
@@ -223,6 +232,55 @@ fn emit_state(
             kind: TransferKind::Outbound,
             state: Some(state),
             metadata: None,
+        }),
+    }));
+}
+
+fn emit_progress(
+    sender: &broadcast::Sender<ChannelMessage>,
+    id: &str,
+    total_bytes: u64,
+    ack_bytes: u64,
+) {
+    drop(sender.send(ChannelMessage {
+        id: id.to_string(),
+        msg: Message::Client(MessageClient {
+            kind: TransferKind::Outbound,
+            state: Some(TransferState::SendingFiles),
+            metadata: Some(TransferMetadata {
+                id: id.to_string(),
+                source: None,
+                pin_code: None,
+                payload_kind: TransferPayloadKind::Files,
+                payload_preview: None,
+                payload: None,
+                total_bytes,
+                ack_bytes,
+            }),
+        }),
+    }));
+}
+
+fn emit_finished(
+    sender: &broadcast::Sender<ChannelMessage>,
+    id: &str,
+    total_bytes: u64,
+) {
+    drop(sender.send(ChannelMessage {
+        id: id.to_string(),
+        msg: Message::Client(MessageClient {
+            kind: TransferKind::Outbound,
+            state: Some(TransferState::Finished),
+            metadata: Some(TransferMetadata {
+                id: id.to_string(),
+                source: None,
+                pin_code: None,
+                payload_kind: TransferPayloadKind::Files,
+                payload_preview: None,
+                payload: None,
+                total_bytes,
+                ack_bytes: total_bytes,
+            }),
         }),
     }));
 }

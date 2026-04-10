@@ -63,9 +63,9 @@ uuid = { version = "1.20", features = ["v4"] }
 zeroize = "1.8"
 
 # Vendored LocalSend
-axum = { version = "0.8", features = ["macros"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "http2"] }
-socket2 = { version = "0.6", features = ["all"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "native-tls"] }
+socket2 = "0.6"
 thiserror = "2.0"
 
 # Runtime

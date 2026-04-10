@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use localsend_rs::protocol::{DeviceInfo, Protocol};
-use localsend_rs::{Discovery, MulticastDiscovery};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::DeviceType;
+use crate::localsend::{DeviceInfo, DeviceType as LsDeviceType, MulticastDiscovery, Protocol};
 
 use super::{EndpointInfo, TransferProtocol};
 
@@ -26,43 +25,21 @@ pub struct LocalSendDiscoveryBridge {
 
 impl LocalSendDiscoveryBridge {
     pub fn new(alias: String, port: u16, sender: broadcast::Sender<EndpointInfo>) -> Self {
-        Self {
-            alias,
-            port,
-            sender,
-        }
+        Self { alias, port, sender }
     }
 
     pub async fn run(self, ctk: CancellationToken) {
         info!("{INNER_NAME}: starting");
 
-        let mut discovery = match MulticastDiscovery::new(
-            self.alias,
-            self.port,
-            Protocol::Http,
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                error!("{INNER_NAME}: failed to create discovery: {e}");
-                return;
-            }
-        };
+        let mut discovery = MulticastDiscovery::new(self.alias, self.port, Protocol::Http);
+        let mut rx = discovery.subscribe();
 
         if let Err(e) = discovery.start().await {
             error!("{INNER_NAME}: failed to start: {e}");
             return;
         }
 
-        // Subscribe to discovered devices
-        let tx = self.sender.clone();
         let mut seen: HashMap<String, Instant> = HashMap::new();
-
-        discovery.on_discovered(move |device: DeviceInfo| {
-            let ei = device_to_endpoint(&device);
-            drop(tx.send(ei));
-        });
-
-        // Periodic announce + TTL cleanup
         let mut announce_interval =
             tokio::time::interval(std::time::Duration::from_secs(ANNOUNCE_INTERVAL_SECS));
 
@@ -73,38 +50,44 @@ impl LocalSendDiscoveryBridge {
                     discovery.stop();
                     break;
                 }
+                Ok(device) = rx.recv() => {
+                    seen.insert(device.fingerprint.clone(), Instant::now());
+                    drop(self.sender.send(device_to_endpoint(&device)));
+                }
                 _ = announce_interval.tick() => {
                     if let Err(e) = discovery.announce_presence().await {
                         debug!("{INNER_NAME}: announce failed: {e}");
                     }
-
-                    // TTL cleanup - remove stale devices
-                    let now = Instant::now();
-                    let expired: Vec<String> = seen
-                        .iter()
-                        .filter(|(_, last_seen)| now.duration_since(**last_seen).as_secs() > DEVICE_TTL_SECS)
-                        .map(|(id, _)| id.clone())
-                        .collect();
-
-                    for id in expired {
-                        seen.remove(&id);
-                        drop(self.sender.send(EndpointInfo {
-                            id,
-                            present: Some(false),
-                            protocol: TransferProtocol::LocalSend,
-                            ..Default::default()
-                        }));
-                    }
+                    expire_stale(&mut seen, &self.sender);
                 }
             }
         }
     }
 }
 
+fn expire_stale(seen: &mut HashMap<String, Instant>, sender: &broadcast::Sender<EndpointInfo>) {
+    let now = Instant::now();
+    let expired: Vec<String> = seen
+        .iter()
+        .filter(|(_, last)| now.duration_since(**last).as_secs() > DEVICE_TTL_SECS)
+        .map(|(id, _)| id.clone())
+        .collect();
+
+    for id in expired {
+        seen.remove(&id);
+        drop(sender.send(EndpointInfo {
+            id,
+            present: Some(false),
+            protocol: TransferProtocol::LocalSend,
+            ..Default::default()
+        }));
+    }
+}
+
 fn device_to_endpoint(device: &DeviceInfo) -> EndpointInfo {
     let rtype = device.device_type.map(|dt| match dt {
-        localsend_rs::protocol::DeviceType::Mobile => DeviceType::Phone,
-        localsend_rs::protocol::DeviceType::Desktop => DeviceType::Laptop,
+        LsDeviceType::Mobile => DeviceType::Phone,
+        LsDeviceType::Desktop => DeviceType::Laptop,
         _ => DeviceType::Unknown,
     });
 

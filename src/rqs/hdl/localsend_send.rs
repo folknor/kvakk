@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use localsend_rs::protocol::{DeviceInfo, FileId, Protocol};
-use localsend_rs::{LocalSendClient, build_file_metadata};
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
+use crate::DeviceType;
 use crate::channel::{ChannelMessage, Message, MessageClient, TransferKind};
 use crate::hdl::TransferState;
 use crate::hdl::info::{TransferMetadata, TransferPayload, TransferPayloadKind};
+use crate::localsend::{
+    self, DeviceInfo, FileId, FileMetadata, LocalSendClient, PROTOCOL_VERSION, Protocol,
+};
 use crate::utils::RemoteDeviceInfo;
-use crate::DeviceType;
 
 const INNER_NAME: &str = "LocalSendSender";
 
@@ -60,32 +61,24 @@ async fn handle_send(
     let file_names: Vec<String> = info
         .files
         .iter()
-        .filter_map(|f| {
-            Path::new(f)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
+        .filter_map(|f| Path::new(f).file_name().map(|n| n.to_string_lossy().to_string()))
         .collect();
 
     let protocol: Protocol = info.ls_protocol.as_str().into();
     let target = build_target_device(&info, protocol);
     let client = LocalSendClient::new(build_local_device(device_alias));
 
-    // Build file metadata
-    let (files_meta, id_to_path) = match build_all_metadata(&info.files).await {
-        Some(result) => result,
-        None => {
-            emit_state(message_sender, &transfer_id, TransferState::Cancelled);
-            return;
-        }
+    let Some((files_meta, id_to_path)) = build_all_metadata(&info.files).await else {
+        emit_state(message_sender, &transfer_id, TransferState::Cancelled);
+        return;
     };
 
     let total_bytes: u64 = files_meta.values().map(|m| m.size).sum();
-    let file_sizes: HashMap<FileId, u64> = files_meta.iter().map(|(id, m)| (id.clone(), m.size)).collect();
+    let file_sizes: HashMap<FileId, u64> =
+        files_meta.iter().map(|(id, m)| (id.clone(), m.size)).collect();
     emit_initial(message_sender, &transfer_id, &info.name, file_names, total_bytes);
 
-    // Prepare upload
-    let upload_response = match client.prepare_upload(&target, files_meta, None).await {
+    let upload_response = match client.prepare_upload(&target, files_meta).await {
         Ok(resp) => resp,
         Err(e) => {
             error!("{INNER_NAME}: prepare_upload failed: {e}");
@@ -101,7 +94,6 @@ async fn handle_send(
 
     emit_state(message_sender, &transfer_id, TransferState::SendingFiles);
 
-    // Upload each file, tracking progress per completed file
     let mut ack_bytes: u64 = 0;
     for (file_id, token) in &upload_response.files {
         let Some(path_str) = id_to_path.get(file_id) else {
@@ -118,7 +110,6 @@ async fn handle_send(
                 file_id,
                 token,
                 Path::new(path_str),
-                None,
             )
             .await
         {
@@ -137,7 +128,7 @@ async fn handle_send(
 fn build_target_device(info: &LocalSendSendInfo, protocol: Protocol) -> DeviceInfo {
     DeviceInfo {
         alias: info.name.clone(),
-        version: localsend_rs::protocol::PROTOCOL_VERSION.to_string(),
+        version: PROTOCOL_VERSION.to_string(),
         device_model: None,
         device_type: None,
         fingerprint: info.fingerprint.clone(),
@@ -151,10 +142,10 @@ fn build_target_device(info: &LocalSendSendInfo, protocol: Protocol) -> DeviceIn
 fn build_local_device(alias: &str) -> DeviceInfo {
     DeviceInfo {
         alias: alias.to_string(),
-        version: localsend_rs::protocol::PROTOCOL_VERSION.to_string(),
-        device_model: Some(localsend_rs::get_device_model()),
-        device_type: Some(localsend_rs::get_device_type()),
-        fingerprint: localsend_rs::generate_fingerprint(),
+        version: PROTOCOL_VERSION.to_string(),
+        device_model: Some(localsend::get_device_model()),
+        device_type: Some(localsend::get_device_type()),
+        fingerprint: localsend::generate_fingerprint(),
         port: 0,
         protocol: Protocol::Http,
         download: false,
@@ -164,21 +155,19 @@ fn build_local_device(alias: &str) -> DeviceInfo {
 
 async fn build_all_metadata(
     files: &[String],
-) -> Option<(HashMap<FileId, localsend_rs::protocol::FileMetadata>, HashMap<FileId, String>)> {
+) -> Option<(HashMap<FileId, FileMetadata>, HashMap<FileId, String>)> {
     let mut files_meta = HashMap::new();
     let mut id_to_path = HashMap::new();
 
     for path_str in files {
         let path = Path::new(path_str);
-        match build_file_metadata(path).await {
+        match localsend::build_file_metadata(path).await {
             Ok(meta) => {
                 let file_id = meta.id.clone();
                 id_to_path.insert(file_id.clone(), path_str.clone());
                 files_meta.insert(file_id, meta);
             }
-            Err(e) => {
-                error!("{INNER_NAME}: failed to build metadata for {path_str}: {e}");
-            }
+            Err(e) => error!("{INNER_NAME}: failed to build metadata for {path_str}: {e}"),
         }
     }
 
@@ -221,11 +210,7 @@ fn emit_initial(
     }));
 }
 
-fn emit_state(
-    sender: &broadcast::Sender<ChannelMessage>,
-    id: &str,
-    state: TransferState,
-) {
+fn emit_state(sender: &broadcast::Sender<ChannelMessage>, id: &str, state: TransferState) {
     drop(sender.send(ChannelMessage {
         id: id.to_string(),
         msg: Message::Client(MessageClient {
@@ -261,11 +246,7 @@ fn emit_progress(
     }));
 }
 
-fn emit_finished(
-    sender: &broadcast::Sender<ChannelMessage>,
-    id: &str,
-    total_bytes: u64,
-) {
+fn emit_finished(sender: &broadcast::Sender<ChannelMessage>, id: &str, total_bytes: u64) {
     drop(sender.send(ChannelMessage {
         id: id.to_string(),
         msg: Message::Client(MessageClient {

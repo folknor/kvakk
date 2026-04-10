@@ -23,6 +23,7 @@ use crate::manager::TcpServer;
 pub mod channel;
 pub mod errors;
 pub mod hdl;
+pub mod localsend;
 pub mod manager;
 pub mod utils;
 
@@ -182,18 +183,14 @@ impl RQS {
         let device_name = self.get_device_name();
         let save_dir = utils::get_download_dir();
         let mut localsend_ok = false;
-        match LocalSendServerBridge::new(device_name.clone(), LOCALSEND_PORT, save_dir) {
-            Ok(mut ls_server) => {
-                let msg_sender = self.message_sender.clone();
-                let ctk = ctoken.clone();
-                if let Err(e) = ls_server.start(msg_sender, ctk).await {
-                    warn!("LocalSendServer failed to start: {e}");
-                } else {
-                    info!("LocalSendServer started on port {LOCALSEND_PORT}");
-                    localsend_ok = true;
-                }
-            }
-            Err(e) => warn!("LocalSendServer init failed: {e}"),
+        let mut ls_server = LocalSendServerBridge::new(device_name.clone(), LOCALSEND_PORT, save_dir);
+        let msg_sender = self.message_sender.clone();
+        let ctk = ctoken.clone();
+        if let Err(e) = ls_server.start(msg_sender, ctk).await {
+            warn!("LocalSendServer failed to start: {e}");
+        } else {
+            info!("LocalSendServer started on port {LOCALSEND_PORT}");
+            localsend_ok = true;
         }
 
         // Start LocalSend sender task

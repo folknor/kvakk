@@ -55,4 +55,12 @@ cargo build --release
 - [Martichou/rquickshare](https://github.com/Martichou/rquickshare) - Original Rust implementation
 - [grishka/NearDrop](https://github.com/grishka/NearDrop) - Quick Share for macOS
 - [localsend/localsend](https://github.com/localsend/localsend) - LocalSend official app
-- [CrossCopy/localsend-rs](https://github.com/CrossCopy/localsend-rs) - Rust LocalSend library used by Kvakk
+- [CrossCopy/localsend-rs](https://github.com/CrossCopy/localsend-rs) - Rust LocalSend library, vendored into `src/rqs/localsend/`
+
+## Acknowledgements
+
+The LocalSend implementation under `src/rqs/localsend/` was initially
+vendored from [CrossCopy/localsend-rs](https://github.com/CrossCopy/localsend-rs)
+and then trimmed and refactored to suit kvakk's needs. That initial code
+contribution is licensed under the MIT license; the rest of kvakk is
+licensed under AGPL-3.0.

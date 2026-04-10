@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use localsend_rs::protocol::ReceivedFile as LsReceivedFile;
-use localsend_rs::server::PendingTransfer;
-use localsend_rs::LocalSendServer;
 use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
@@ -11,50 +8,31 @@ use crate::DeviceType;
 use crate::channel::{ChannelMessage, Message, MessageClient, TransferKind};
 use crate::hdl::TransferState;
 use crate::hdl::info::{TransferMetadata, TransferPayload, TransferPayloadKind};
+use crate::localsend::{LocalSendServer, PendingTransfer, ReceivedFile};
 use crate::utils::RemoteDeviceInfo;
 
 const INNER_NAME: &str = "LocalSendServer";
 
 pub struct LocalSendServerBridge {
     pending: Arc<RwLock<Option<PendingTransfer>>>,
-    received: Arc<RwLock<Vec<LsReceivedFile>>>,
+    received: Arc<RwLock<Vec<ReceivedFile>>>,
     server: LocalSendServer,
 }
 
 impl LocalSendServerBridge {
-    pub fn new(
-        alias: String,
-        port: u16,
-        save_dir: PathBuf,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn new(alias: String, port: u16, save_dir: PathBuf) -> Self {
         let pending: Arc<RwLock<Option<PendingTransfer>>> = Arc::new(RwLock::new(None));
-        let received: Arc<RwLock<Vec<LsReceivedFile>>> = Arc::new(RwLock::new(Vec::new()));
+        let received: Arc<RwLock<Vec<ReceivedFile>>> = Arc::new(RwLock::new(Vec::new()));
 
-        let device = localsend_rs::protocol::DeviceInfo {
+        let server = LocalSendServer::new(
             alias,
-            version: localsend_rs::protocol::PROTOCOL_VERSION.to_string(),
-            device_model: Some(localsend_rs::get_device_model()),
-            device_type: Some(localsend_rs::get_device_type()),
-            fingerprint: localsend_rs::generate_fingerprint(),
             port,
-            protocol: localsend_rs::protocol::Protocol::Http,
-            download: false,
-            ip: None,
-        };
-
-        let server = LocalSendServer::new_with_device(
-            device,
             save_dir,
-            false,
             Arc::clone(&pending),
             Arc::clone(&received),
-        )?;
+        );
 
-        Ok(Self {
-            pending,
-            received,
-            server,
-        })
+        Self { pending, received, server }
     }
 
     pub async fn start(
@@ -62,7 +40,7 @@ impl LocalSendServerBridge {
         message_sender: broadcast::Sender<ChannelMessage>,
         ctk: CancellationToken,
     ) -> Result<(), anyhow::Error> {
-        self.server.start(None).await?;
+        self.server.start().await?;
         info!("{INNER_NAME}: HTTP server started");
 
         let pending = Arc::clone(&self.pending);
@@ -78,7 +56,7 @@ impl LocalSendServerBridge {
 
 async fn poll_transfers(
     pending: Arc<RwLock<Option<PendingTransfer>>>,
-    received: Arc<RwLock<Vec<LsReceivedFile>>>,
+    received: Arc<RwLock<Vec<ReceivedFile>>>,
     message_sender: broadcast::Sender<ChannelMessage>,
     ctk: CancellationToken,
 ) {
@@ -148,7 +126,7 @@ async fn check_pending(
 }
 
 async fn check_received(
-    received: &Arc<RwLock<Vec<LsReceivedFile>>>,
+    received: &Arc<RwLock<Vec<ReceivedFile>>>,
     message_sender: &broadcast::Sender<ChannelMessage>,
     active_transfer_id: &mut Option<String>,
     last_received_count: &mut usize,

@@ -13,7 +13,7 @@ name = "kvakk"
 path = "src/main.rs"
 
 [build-dependencies]
-prost-build = "0.14"
+prost-build = "0.14.4"
 
 [target.'cfg(target_os = "linux")']
 dev-dependencies = {}
@@ -34,14 +34,14 @@ windows = { version = "0.62", features = [
 dev-dependencies = {}
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
-dbus = { version = "0.9", features = ["vendored"] }
+dbus = { version = "0.9.12", features = ["vendored"] }
 
 [dependencies]
 # Core library dependencies
-anyhow = "1.0"
+anyhow = "1.0.103"
 base64 = "0.22"
 btleplug = "0.12"
-bytes = "1.11"
+bytes = "1.12.1"
 directories = "6.0"
 display-info = "0.5"
 futures = "0.3"
@@ -51,39 +51,39 @@ hkdf = "0.13.0"
 hmac = "0.13.0"
 hostname = "0.4"
 libaes = "0.7"
-log = "0.4"
-mdns-sd = "0.19.0"
+log = "0.4.33"
+mdns-sd = "0.20.1"
 mime_guess = "2.0"
-num-bigint = "0.4"
-p256 = { version = "0.13", features = ["ecdh"] }
-prost = "0.14"
-rand = "0.10"
+num-bigint = "0.5.1"
+p256 = { version = "0.14.0", features = ["ecdh"] }
+prost = "0.14.4"
+rand = "0.10.2"
 sha2 = "0.11.0"
-uuid = { version = "1.20", features = ["v4"] }
-zeroize = "1.8"
+uuid = { version = "1.23.5", features = ["v4"] }
+zeroize = "1.9.0"
 
 # Vendored LocalSend
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "native-tls"] }
-socket2 = "0.6"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "native-tls"] }
+socket2 = "0.6.5"
 thiserror = "2.0"
 
 # Runtime
-env_logger = "0.11"
+env_logger = "0.11.11"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "sync", "time", "io-util", "signal", "fs"] }
+serde_json = "1.0.150"
+tokio = { version = "1.52.3", features = ["macros", "rt", "rt-multi-thread", "net", "sync", "time", "io-util", "signal", "fs"] }
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 
 # GUI (egui)
-eframe = { version = "0.33", default-features = false, features = [
+eframe = { version = "0.35.0", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
     "wayland",
 ] }
 rfd = "0.17"
-catppuccin-egui = { version = "5.7", default-features = false, features = ["egui33"] }
+# catppuccin-egui is vendored in src/catppuccin_egui/ (upstream stalled at egui 0.33)
 
 [profile.release]
 lto = true

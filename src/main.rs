@@ -7,6 +7,8 @@ use std::thread;
 
 use eframe::egui;
 use rqs::channel::{ChannelMessage, Message, TransferAction};
+
+mod catppuccin_egui;
 use rqs::hdl::{EndpointInfo, TransferProtocol, TransferState};
 use rqs::{LocalSendSendInfo, OutboundPayload, SendInfo, RQS};
 use tokio::sync::broadcast;
@@ -409,12 +411,15 @@ impl KvakkApp {
 }
 
 impl eframe::App for KvakkApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_messages();
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
 
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(theme::CRUST))
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 // Custom title bar
                 self.draw_title_bar(ui);
 
@@ -471,8 +476,6 @@ impl eframe::App for KvakkApp {
                         });
                 }
             });
-
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 }
 

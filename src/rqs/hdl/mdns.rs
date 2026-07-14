@@ -144,7 +144,7 @@ impl MDnsServer {
             Ok(receiver) => {
                 // Wait for unregister confirmation (with timeout via recv)
                 if let Ok(event) = receiver.recv() {
-                    info!("{INNER_NAME}: service unregistered: {:?}", &event);
+                    info!("{INNER_NAME}: service unregistered: {event:?}");
                 }
             }
             Err(e) => {

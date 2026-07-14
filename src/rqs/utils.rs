@@ -11,7 +11,7 @@ use directories::ProjectDirs;
 use get_if_addrs::get_if_addrs;
 use hkdf::Hkdf;
 use num_bigint::{BigUint, ToBigInt};
-use p256::elliptic_curve::rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 use p256::{PublicKey, SecretKey};
 use rand::distr::Alphanumeric;
 use rand::{Rng, RngExt};
@@ -45,7 +45,7 @@ static ENDPOINT_ID: LazyLock<[u8; 4]> = LazyLock::new(|| {
             .take(4)
             .collect::<Vec<u8>>()
             .try_into()
-            .unwrap_or([b'A', b'B', b'C', b'D']);
+            .unwrap_or(*b"ABCD");
 
         // Best effort save - don't fail if we can't persist
         if fs::create_dir_all(data_dir).is_ok()
@@ -63,7 +63,7 @@ static ENDPOINT_ID: LazyLock<[u8; 4]> = LazyLock::new(|| {
         .take(4)
         .collect::<Vec<u8>>()
         .try_into()
-        .unwrap_or([b'A', b'B', b'C', b'D'])
+        .unwrap_or(*b"ABCD")
 });
 
 /// Returns the persistent 4-byte endpoint ID used for mDNS service naming.
@@ -186,7 +186,7 @@ pub async fn stream_read_exact(
 }
 
 pub fn gen_ecdsa_keypair() -> (SecretKey, PublicKey) {
-    let secret_key = SecretKey::random(&mut OsRng);
+    let secret_key = SecretKey::generate();
     let public_key = secret_key.public_key();
 
     (secret_key, public_key)

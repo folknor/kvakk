@@ -9,8 +9,8 @@ use anyhow::anyhow;
 use hmac::{Hmac, KeyInit, Mac};
 use libaes::{AES_256_KEY_LEN, Cipher};
 use p256::ecdh::diffie_hellman;
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{EncodedPoint, PublicKey};
+use p256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
+use p256::{PublicKey, Sec1Point};
 use prost::Message;
 use rand::RngExt;
 use sha2::{Digest, Sha256, Sha512};
@@ -284,7 +284,7 @@ impl OutboundRequest {
     pub async fn send_ukey2_client_init(&mut self) -> Result<(), anyhow::Error> {
         let (secret_key, public_key) = gen_ecdsa_keypair();
 
-        let encoded_point = public_key.to_encoded_point(false);
+        let encoded_point = public_key.to_sec1_point(false);
         let x = encoded_point.x().ok_or_else(|| anyhow!("Missing x coordinate"))?;
         let y = encoded_point.y().ok_or_else(|| anyhow!("Missing y coordinate"))?;
 
@@ -1165,8 +1165,8 @@ impl OutboundRequest {
             bytes.extend_from_slice(&peer_p256_key.y);
         }
 
-        let encoded_point = EncodedPoint::from_bytes(bytes)?;
-        let peer_key: PublicKey = Option::from(PublicKey::from_encoded_point(&encoded_point))
+        let encoded_point = Sec1Point::from_bytes(bytes)?;
+        let peer_key: PublicKey = Option::from(PublicKey::from_sec1_point(&encoded_point))
             .ok_or_else(|| anyhow!("Invalid peer public key from encoded point"))?;
         let priv_key = self
             .state

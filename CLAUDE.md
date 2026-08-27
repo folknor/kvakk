@@ -10,32 +10,32 @@ cargo run
 RUST_LOG=debug cargo run  # verbose
 ```
 
-Strict clippy lints enforced — see `[lints.clippy]` in Cargo.toml. Notable: `unwrap_used = "deny"`, `too_many_lines = "deny"`, `cognitive_complexity = "deny"`.
+Strict clippy lints enforced - see `[lints.clippy]` in Cargo.toml. Notable: `unwrap_used = "deny"`, `too_many_lines = "deny"`, `cognitive_complexity = "deny"`.
 
 ## Architecture
 
-- `src/main.rs` — egui GUI app (eframe + catppuccin mocha theme, 344x350 fixed window)
-- `src/rqs/lib.rs` — Core library, starts tokio runtime, mDNS, BLE, TCP server, LocalSend server
-- `src/rqs/manager.rs` — TCP server, connection handling (max 100 concurrent via semaphore)
-- `src/rqs/channel.rs` — Message passing between async backend and GUI
-- `src/rqs/utils.rs` — Endpoint ID, crypto helpers, mDNS name generation
+- `src/main.rs` - egui GUI app (eframe + catppuccin mocha theme, 344x350 fixed window)
+- `src/rqs/lib.rs` - Core library, starts tokio runtime, mDNS, BLE, TCP server, LocalSend server
+- `src/rqs/manager.rs` - TCP server, connection handling (max 100 concurrent via semaphore)
+- `src/rqs/channel.rs` - Message passing between async backend and GUI
+- `src/rqs/utils.rs` - Endpoint ID, crypto helpers, mDNS name generation
 
 ### Quick Share handlers
-- `src/rqs/hdl/inbound.rs` — Inbound transfer state machine (~1640 lines)
-- `src/rqs/hdl/outbound.rs` — Outbound transfer state machine (~1456 lines)
-- `src/rqs/hdl/mdns.rs` — mDNS service registration
-- `src/rqs/hdl/mdns_discovery.rs` — mDNS device discovery, `EndpointInfo` and `TransferProtocol` types
-- `src/rqs/hdl/ble.rs` — BLE listener (btleplug, cross-platform)
-- `src/rqs/hdl/blea.rs` — BLE advertiser (bluer, Linux-only)
-- `src/rqs/hdl/blea_windows.rs` — BLE advertiser (windows crate, Windows-only)
-- `src/rqs/hdl/info.rs` — Transfer metadata and payload structs
-- `src/proto_src/*.proto` — Google Quick Share protocol buffer definitions
-- `build.rs` — prost-build for proto compilation
+- `src/rqs/hdl/inbound.rs` - Inbound transfer state machine (~1640 lines)
+- `src/rqs/hdl/outbound.rs` - Outbound transfer state machine (~1456 lines)
+- `src/rqs/hdl/mdns.rs` - mDNS service registration
+- `src/rqs/hdl/mdns_discovery.rs` - mDNS device discovery, `EndpointInfo` and `TransferProtocol` types
+- `src/rqs/hdl/ble.rs` - BLE listener (btleplug, cross-platform)
+- `src/rqs/hdl/blea.rs` - BLE advertiser (bluer, Linux-only)
+- `src/rqs/hdl/blea_windows.rs` - BLE advertiser (windows crate, Windows-only)
+- `src/rqs/hdl/info.rs` - Transfer metadata and payload structs
+- `src/proto_src/*.proto` - Google Quick Share protocol buffer definitions
+- `build.rs` - prost-build for proto compilation
 
 ### LocalSend handlers
-- `src/rqs/hdl/localsend_discovery.rs` — Wraps `localsend-rs` multicast discovery, maps to `EndpointInfo`
-- `src/rqs/hdl/localsend_server.rs` — HTTP server bridge for receiving files, auto-accepts, polls `PendingTransfer`
-- `src/rqs/hdl/localsend_send.rs` — Outbound file sender via `LocalSendClient`
+- `src/rqs/hdl/localsend_discovery.rs` - Wraps `localsend-rs` multicast discovery, maps to `EndpointInfo`
+- `src/rqs/hdl/localsend_server.rs` - HTTP server bridge for receiving files, auto-accepts, polls `PendingTransfer`
+- `src/rqs/hdl/localsend_send.rs` - Outbound file sender via `LocalSendClient`
 
 ## Protocols
 

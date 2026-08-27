@@ -6,7 +6,7 @@ enabling file transfers from iPhones.
 ## Conclusion: Not Viable
 
 The primary target for Kvakk is Windows users receiving files from iPhones.
-AirDrop cannot work on Windows — Apple doesn't provide a client, and the
+AirDrop cannot work on Windows - Apple doesn't provide a client, and the
 underlying AWDL transport requires low-level Wi-Fi APIs that only exist on
 Linux (and even there, require specialized hardware with monitor mode and
 frame injection). Google's own Quick Share AirDrop interop is Android-only
@@ -20,7 +20,7 @@ reference in case the landscape changes.
 As of November 2025, Google's Quick Share on Android supports AirDrop
 interoperability (driven by EU Digital Markets Act). Pixel 10 shipped first,
 broader OEM rollout happening in 2026. This means Android phones can already
-send files to iPhones via AirDrop — and receive from them.
+send files to iPhones via AirDrop - and receive from them.
 
 However, there is no Quick Share app for iOS. The only way to receive files
 from an iPhone on Linux is to speak AirDrop natively.
@@ -68,7 +68,7 @@ endpoints over IPv6 with binary plist bodies:
 
 ## Transport: AWDL (The Hard Part)
 
-AirDrop runs over AWDL (Apple Wireless Direct Link) — a proprietary Wi-Fi
+AirDrop runs over AWDL (Apple Wireless Direct Link) - a proprietary Wi-Fi
 protocol. This is the main engineering challenge.
 
 ### What AWDL Is
@@ -82,7 +82,7 @@ direct link without requiring a shared Wi-Fi network.
 **Mandatory:** Wi-Fi card with active monitor mode and frame injection support.
 
 Known compatible: Atheros AR9280 (802.11n). Most consumer laptop Wi-Fi cards
-do NOT support this. There is no software workaround — this is a hardware/driver
+do NOT support this. There is no software workaround - this is a hardware/driver
 limitation.
 
 Detection at runtime:
@@ -107,7 +107,7 @@ The `apple-ble` crate can generate these advertisements via BlueZ on Linux.
 
 ## Existing Implementations
 
-### OpenDrop (Python) — Reference Implementation
+### OpenDrop (Python) - Reference Implementation
 - GitHub: seemoo-lab/opendrop (~9.5k stars)
 - Status: Functional, research-grade, maintained through 2024
 - Implements full application protocol (Discover/Ask/Upload)
@@ -116,7 +116,7 @@ The `apple-ble` crate can generate these advertisements via BlueZ on Linux.
 - No Apple ID verification (auto-accepts)
 - Best source for protocol details
 
-### OWL (C) — AWDL Daemon
+### OWL (C) - AWDL Daemon
 - GitHub: seemoo-lab/owl (~1.5k stars)
 - Creates virtual `awdl0` TAP interface on Linux
 - Applications use it as a normal IPv6 network interface
@@ -142,10 +142,10 @@ All mature and ready to use:
 | Component          | Crate       | Downloads | Notes |
 |--------------------|-------------|-----------|-------|
 | DNS-SD             | `mdns-sd`   | 1.9M      | Pure Rust, no system deps |
-| HTTPS server       | `axum`      | —         | With `rustls` for TLS |
-| Binary plist       | `plist`     | —         | Serde support, binary format |
-| Self-signed certs  | `rcgen`     | —         | Certificate generation |
-| CPIO archives      | `cpio`      | —         | Archive extraction |
+| HTTPS server       | `axum`      | -         | With `rustls` for TLS |
+| Binary plist       | `plist`     | -         | Serde support, binary format |
+| Self-signed certs  | `rcgen`     | -         | Certificate generation |
+| CPIO archives      | `cpio`      | -         | Archive extraction |
 
 ## Architecture Recommendation
 
@@ -169,17 +169,17 @@ Two independent layers:
 ## Research Repos
 
 Cloned to `research/` for reference:
-- `research/opendrop/` — Protocol reference (Python)
-- `research/owl/` — AWDL daemon (C)
-- `research/grace/` — AWDL daemon (Rust)
-- `research/awdl-frame-parser/` — Frame parsing (Rust)
-- `research/apple-ble/` — BLE advertisements (Rust)
+- `research/opendrop/` - Protocol reference (Python)
+- `research/owl/` - AWDL daemon (C)
+- `research/grace/` - AWDL daemon (Rust)
+- `research/awdl-frame-parser/` - Frame parsing (Rust)
+- `research/apple-ble/` - BLE advertisements (Rust)
 
 ## References
 
 - [Quick Share AirDrop interop announcement (9to5Google)](https://9to5google.com/2025/11/20/android-quick-share-airdrop-pixel-10/)
 - [TechCrunch coverage](https://techcrunch.com/2025/11/20/androids-quick-share-now-works-with-iphones-airdrop-starting-with-the-pixel-10-lineup/)
-- [USENIX Security 2019 — AWDL reverse engineering paper](https://www.usenix.org/conference/usenixsecurity19/presentation/stute)
+- [USENIX Security 2019 - AWDL reverse engineering paper](https://www.usenix.org/conference/usenixsecurity19/presentation/stute)
 - [OpenDrop GitHub](https://github.com/seemoo-lab/opendrop)
 - [OWL GitHub](https://github.com/seemoo-lab/owl)
 - [Grace GitHub](https://github.com/Frostie314159/grace)

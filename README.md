@@ -2,8 +2,8 @@
 
 Send and receive files with nearby devices on your local network using Quick Share and LocalSend.
 
-- **Quick Share** — Android devices
-- **LocalSend** — iOS, macOS, Windows, Linux, and anything running the LocalSend app
+- **Quick Share** - Android devices
+- **LocalSend** - iOS, macOS, Windows, Linux, and anything running the LocalSend app
 
 Runs on Linux and Windows.
 
@@ -17,8 +17,8 @@ Kvakk is **always visible** to nearby devices on the same network. Unlike the of
 - **Always advertises** itself via mDNS, BLE, and LocalSend multicast
 - **Anyone nearby** can see your device and send files to you
 - **No contact restrictions** - works with any compatible device
-- **Auto-accepts** all incoming transfers — no confirmation dialogs
-- **Unified device grid** — Quick Share and LocalSend devices appear side by side
+- **Auto-accepts** all incoming transfers - no confirmation dialogs
+- **Unified device grid** - Quick Share and LocalSend devices appear side by side
 
 ### Sending Files
 

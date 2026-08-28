@@ -2,7 +2,7 @@
 
 Environment: kvakk on ethernet desktop (192.168.0.178), phones on wifi, same router.
 
-## Issue 1 — iPhone doesn't discover kvakk
+## Issue 1 - iPhone doesn't discover kvakk
 
 kvakk sees the iPhone via multicast discovery, but the iPhone never shows kvakk.
 
@@ -11,7 +11,7 @@ kvakk sees the iPhone via multicast discovery, but the iPhone never shows kvakk.
 - Multicast goes out correct interface (enp9s0, 192.168.0.178)
 - Firewall is open (iptables INPUT policy ACCEPT)
 - When kvakk receives an announcement from the iPhone, `localsend-rs` calls `respond_to_announcement` which first tries HTTP registration (POST to phone's `/api/localsend/v2/register`) then falls back to a UDP multicast response
-- kvakk announces `Protocol::Http` — the official LocalSend app may expect or prefer HTTPS
+- kvakk announces `Protocol::Http` - the official LocalSend app may expect or prefer HTTPS
 - The `DeviceInfo` sent in both the HTTP registration body and the UDP announcement has `ip: None` (localsend-rs never populates this field)
 - Possibly the same root cause as Issue 3 (phone can't reach kvakk:53317 to complete the handshake)
 
@@ -21,7 +21,7 @@ kvakk sees the iPhone via multicast discovery, but the iPhone never shows kvakk.
 - Verify whether iOS LocalSend requires HTTPS peers
 - Check if `ip: None` in registration body causes the phone to discard kvakk
 
-## Issue 2 — Progress bar stuck at 0% when sending to Android (FIXED)
+## Issue 2 - Progress bar stuck at 0% when sending to Android (FIXED)
 
 When sending a file to an Android phone, the transfer completes successfully on the phone side, but kvakk's progress bar stays at 0% and the "Sending to device" label never changes.
 
@@ -38,7 +38,7 @@ When sending a file to an Android phone, the transfer completes successfully on 
 
 Note: `localsend-rs` has no mid-stream progress callback (marked TODO in library), so progress updates are per-completed-file only.
 
-## Issue 3 — Android phone can't send to kvakk (connection refused)
+## Issue 3 - Android phone can't send to kvakk (connection refused)
 
 When the Android phone tries to send a file to kvakk, it shows:
 ```
@@ -48,16 +48,16 @@ hyper_util::client::legacy::Error(Connect, ConnectError("tcp connect error",
 
 ### Investigation
 
-- `LocalSendServer` binds `0.0.0.0:53317` TCP via axum — should accept connections from any interface
+- `LocalSendServer` binds `0.0.0.0:53317` TCP via axum - should accept connections from any interface
 - Firewall is open
 - Server startup success is tracked by `localsend_ok` flag and shown as a status LED in the title bar
-- UDP (multicast discovery) and TCP (HTTP server) both use port 53317 — this is fine on Linux (separate protocol namespaces)
-- Error is `ConnectionRefused` (ECONNREFUSED), not a TLS handshake error — this means nothing was listening on the target IP:port, not a protocol mismatch
+- UDP (multicast discovery) and TCP (HTTP server) both use port 53317 - this is fine on Linux (separate protocol namespaces)
+- Error is `ConnectionRefused` (ECONNREFUSED), not a TLS handshake error - this means nothing was listening on the target IP:port, not a protocol mismatch
 - The `hyper_util` in the error string suggests the phone runs a Rust-based LocalSend client
 
 ### Next steps
 
-- Run `RUST_LOG=debug cargo run` and attempt send from phone — check for:
+- Run `RUST_LOG=debug cargo run` and attempt send from phone - check for:
   - "LocalSendServer started on port 53317" confirming the server bound successfully
   - Any incoming connection attempts in the logs
 - Verify with `ss -tlnp | grep 53317` while kvakk is running that the port is actually held

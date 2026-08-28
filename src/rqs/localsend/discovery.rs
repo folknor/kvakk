@@ -190,7 +190,7 @@ async fn respond_to_announcement(
         target_device.ip
     );
 
-    // Try HTTP registration first. Fall back to UDP if it fails — common when
+    // Try HTTP registration first. Fall back to UDP if it fails - common when
     // peers have strict firewalls or an incompatible JSON response shape.
     match client.register(target_device).await {
         Ok(_) => {

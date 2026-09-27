@@ -1,94 +1,44 @@
-# Kvakk
+@AGENTS.md
 
-Rust file sharing app supporting two protocols: Google Quick Share (Android) and LocalSend (iOS/everything else). Unified GUI shows both device types in one grid. AGPL-3.0.
+## More rules
 
-## Build & Run
+### Memory rules
 
-```bash
-cargo build
-cargo run
-RUST_LOG=debug cargo run  # verbose
-```
+Do not use your Memory functionality. Durable context belongs in CLAUDE.md or the relevant docs.
 
-Strict clippy lints enforced - see `[lints.clippy]` in Cargo.toml. Notable: `unwrap_used = "deny"`, `too_many_lines = "deny"`, `cognitive_complexity = "deny"`.
+### Bash rules
 
-## Architecture
+- Never use `sed`, `find`, `awk`, `head`, `tail`, or complex bash commands.
+- Never `find /`.
+- One Bash() invocation === one command.
+- Never chain commands with `&&`.
+- Never chain commands with `;`.
+- Never chain/pipe commands with `|`. Exception: piping into `review` is allowed.
+- Never capture stdout into env vars (`UUID=$(...)`).
+- Keep `git commit -m` messages free of zsh metacharacters - braces `{}`, brackets `[]`, parens `()`, angle brackets `<>`, `#`. They trip the permission matcher and block the commit. Spell lists out (`syntax, vm, data and runner`, not `{syntax,vm,data,runner}`), write `5.1 per bar` not `5.1/bar`, name attributes in prose not `#[attr]`.
 
-- `src/main.rs` - egui GUI app (eframe + catppuccin mocha theme, 344x350 fixed window)
-- `src/rqs/lib.rs` - Core library, starts tokio runtime, mDNS, BLE, TCP server, LocalSend server
-- `src/rqs/manager.rs` - TCP server, connection handling (max 100 concurrent via semaphore)
-- `src/rqs/channel.rs` - Message passing between async backend and GUI
-- `src/rqs/utils.rs` - Endpoint ID, crypto helpers, mDNS name generation
+### Subagents
 
-### Quick Share handlers
-- `src/rqs/hdl/inbound.rs` - Inbound transfer state machine (~1640 lines)
-- `src/rqs/hdl/outbound.rs` - Outbound transfer state machine (~1456 lines)
-- `src/rqs/hdl/mdns.rs` - mDNS service registration
-- `src/rqs/hdl/mdns_discovery.rs` - mDNS device discovery, `EndpointInfo` and `TransferProtocol` types
-- `src/rqs/hdl/ble.rs` - BLE listener (btleplug, cross-platform)
-- `src/rqs/hdl/blea.rs` - BLE advertiser (bluer, Linux-only)
-- `src/rqs/hdl/blea_windows.rs` - BLE advertiser (windows crate, Windows-only)
-- `src/rqs/hdl/info.rs` - Transfer metadata and payload structs
-- `src/proto_src/*.proto` - Google Quick Share protocol buffer definitions
-- `build.rs` - prost-build for proto compilation
+- Always get permission from the user before launching subagents.
+- Do NOT use git worktree isolation for parallel agents. Worktrees create merge conflicts that silently drop agent work. Instead, launch agents in the same tree with strict file ownership - zero overlap.
 
-### LocalSend handlers
-- `src/rqs/hdl/localsend_discovery.rs` - Wraps `localsend-rs` multicast discovery, maps to `EndpointInfo`
-- `src/rqs/hdl/localsend_server.rs` - HTTP server bridge for receiving files, auto-accepts, polls `PendingTransfer`
-- `src/rqs/hdl/localsend_send.rs` - Outbound file sender via `LocalSendClient`
+Agent coordination rules:
+- Each agent gets exclusive ownership of specific files. No two agents touch the same file.
+- Agents must read their target file FIRST. Do not replace existing code with placeholders or stub it out.
+- Agents must NOT run `brokkr` or `cargo`. The orchestrator validates between agents.
 
-## Protocols
+Audit protocol:
+- Do not trust agent claims of completion. Verify existence + wiring + behavior.
+- Use the 3-pass audit structure: domain-specific verification, then cross-cutting reconciliation (is the new code actually wired into its callers?), then editorial normalization.
+- Any discrepancies doc should contain only current gaps, not historical records. Remove resolved items entirely.
 
-### Quick Share
-1. **Discovery**: mDNS (`_FC9F5ED42C8A._tcp.local.`) + BLE (UUID 0xFE2C)
-2. **Connection**: TCP + UKEY2 handshake (P256 ECDH -> AES-256 + HMAC-SHA256)
-3. **Transfer**: Encrypted chunked frames with 4-byte BE length prefix, 5MB frame limit
-4. **Completion**: Receiver ACKs payloads, sender requests safe-to-disconnect, receiver initiates disconnect
+Subagent prompt rules:
+- Scope the investigation, not the report. Caps like "under 1500 chars" or "max 15 findings" throw away signal you asked them to surface.
+- Invite lateral findings up front. If they notice a bug, optimization, smell, or anything surprising while doing the scoped work, they should flag it, even when it's outside the immediate task.
+- Name the question, not the method. Don't prescribe tools ("use `git diff`", "use `Read`"), don't prescribe steps ("read in full, not just hunks"), don't enumerate files when the scope already implies them. Prescribing the method wastes tokens and signals distrust.
+- Don't restate rules the agent already inherits. Subagents load the same CLAUDE.md / AGENTS.md as the main session, so the bash rules, no-cargo, no-worktrees, gremlins, etc. are already in scope. Re-listing them is noise.
+- Do pass anything learned in *this* conversation that the agent can't see: the user's framing, prior decisions, what's already been ruled out, the specific claim being audited.
 
-### LocalSend
-1. **Discovery**: UDP multicast (224.0.0.167:53317)
-2. **Connection**: HTTP REST API on port 53317
-3. **Transfer**: `prepare-upload` -> `upload` per file (streaming, 8KB buffer)
-4. Uses `localsend-rs` crate (v0.1, default-features = false)
+### Codex agents
 
-Both protocols auto-accept all incoming transfers. Files saved to `~/Downloads`.
-
-## Platform
-
-Cross-platform (Linux, macOS, Windows). BLE advertiser has platform-specific implementations (`bluer` on Linux, `windows` crate on Windows). Everything else is cross-platform. Filters out virtual network interfaces (Docker, Tailscale, WSL2).
-
-Persistent endpoint ID stored at `~/.local/share/kvakk/endpoint_id`.
-
-## Document folders
-
-The standing layout, across every project. Three live folders plus one retired,
-split by durability first, subject second.
-
-| Folder | Contents | Rule |
-|---|---|---|
-| `reference/` | Durable in-repo reference for anyone working on or with the code - how the thing is built and why: `architecture.md`, `technical-implementation-spec.md`, `performance.md` (the durable record of measured numbers over time), invariants, protocol contracts | Citable from source as a source of truth. What it says must be true. |
-| `docs/` | Durable in-repo documentation of how the thing is used - guides, CLI reference, the consumer-facing API surface. Sometimes exposed as a hand-edited VitePress gh-pages site | Same must-be-true rule. |
-| `notes/` | Transient - work items (`todo.md`), future plans, hypotheticals, bug reports, research, analysis. Things that will die | No truth guarantee. Nothing durable cites it. |
-| `plans/` | Retired | Plan documents are transient: they go in `notes/`. |
-
-`reference/` and `docs/` are both durable and both binding. The difference is
-subject, not audience: `reference/` covers how the thing is built and why - what
-you need in order to change it safely - while `docs/` covers how it is used. A
-developer or library consumer reads both. Where a project publishes a site,
-`docs/` is what gets published; the folder means the same thing either way.
-`notes/` is neither durable nor binding, which is the whole point of keeping it
-separate: a document that may be wrong must not sit where a document that must
-be right is expected.
-
-The dependency direction is therefore one-way. `notes/` may cite `docs/` and
-`reference/`; nothing durable may cite `notes/` - not a code comment, not
-`docs/`, not `reference/`. A code comment must carry its full context, because
-it outlives the note.
-
-**Root-level convention files are exempt.** `AGENTS.md`, `CLAUDE.md`,
-`README.md`, `LICENSE`, `CHANGELOG.md` and their kin are found by tooling and by
-convention at the repository root, and stay there. These folders govern
-documents we chose where to put, not files whose location is dictated.
-
-In `notes/`, `docs/` and `reference/` alike, avoid citing source line numbers -
-they drift fast.
+Never tell a codex agent to read CLAUDE.md (it is Claude-specific and contradicts their job), and never tell them to read AGENTS.md (codex loads it automatically). Put any rule they need directly in the prompt.

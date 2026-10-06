@@ -14,6 +14,16 @@ pub use ble::*;
 mod blea;
 #[cfg(target_os = "linux")]
 pub use blea::*;
+#[cfg(target_os = "linux")]
+mod ble_receiver;
+#[cfg(target_os = "linux")]
+pub use ble_receiver::*;
+#[cfg(target_os = "linux")]
+mod migratable;
+#[cfg(target_os = "linux")]
+pub use migratable::*;
+#[cfg(target_os = "linux")]
+mod weave;
 #[cfg(target_os = "windows")]
 mod blea_windows;
 #[cfg(target_os = "windows")]

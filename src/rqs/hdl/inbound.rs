@@ -12,7 +12,7 @@ use p256::{PublicKey, Sec1Point};
 use prost::Message;
 use rand::RngExt;
 use sha2::{Digest, Sha256, Sha512};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::{Receiver, Sender};
 
@@ -49,16 +49,27 @@ const SANITY_DURATION: Duration = Duration::from_micros(10);
 /// Read timeout for inbound connections (how long to wait for next frame from sender)
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
+#[cfg(target_os = "linux")]
+mod bwu;
+
+/// Inbound transfer over any byte stream: TCP for Wi-Fi LAN connections, the
+/// BLE weave socket (via `MigratableStream`) for BLE-initiated ones.
 #[derive(Debug)]
-pub struct InboundRequest {
-    socket: TcpStream,
+pub struct InboundRequest<S = TcpStream> {
+    socket: S,
     pub state: InnerState,
     sender: Sender<ChannelMessage>,
     receiver: Receiver<ChannelMessage>,
+    /// Offer a Wi-Fi LAN bandwidth upgrade once the connection is encrypted
+    /// (BLE sessions only).
+    bwu_enabled: bool,
+    /// Set when it is time to run the upgrade; the BLE session loop owns the
+    /// stream swap, so it consumes this flag between `handle` calls.
+    bwu_pending: bool,
 }
 
-impl InboundRequest {
-    pub fn new(socket: TcpStream, id: String, sender: Sender<ChannelMessage>) -> Self {
+impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
+    pub fn new(socket: S, id: String, sender: Sender<ChannelMessage>) -> Self {
         let receiver = sender.subscribe();
 
         Self {
@@ -66,7 +77,19 @@ impl InboundRequest {
             state: InnerState::new(id, None),
             sender,
             receiver,
+            bwu_enabled: false,
+            bwu_pending: false,
         }
+    }
+
+    /// Offer a Wi-Fi LAN bandwidth upgrade once the connection is encrypted.
+    pub fn enable_bwu(&mut self) {
+        self.bwu_enabled = true;
+    }
+
+    /// Consume the "run the bandwidth upgrade now" flag.
+    pub fn take_bwu_pending(&mut self) -> bool {
+        std::mem::take(&mut self.bwu_pending)
     }
 
     pub async fn handle(&mut self) -> Result<(), anyhow::Error> {
@@ -206,6 +229,9 @@ impl InboundRequest {
                     false,
                 )
                 .await;
+
+                // The connection is encrypted from here on.
+                self.bwu_pending = self.bwu_enabled;
             }
             // Only process encrypted messages after key exchange is complete
             TransferState::SentConnectionResponse
@@ -775,6 +801,15 @@ impl InboundRequest {
         &mut self,
         smsg: &SecureMessage,
     ) -> Result<(), anyhow::Error> {
+        let offline = self.decrypt_secure_message(smsg).await?;
+        self.process_offline_frame(offline).await
+    }
+
+    /// Verify, decrypt and sequence-check a SecureMessage, returning its frame.
+    async fn decrypt_secure_message(
+        &mut self,
+        smsg: &SecureMessage,
+    ) -> Result<OfflineFrame, anyhow::Error> {
         let recv_hmac_key = self.state.recv_hmac_key.as_ref()
             .ok_or_else(|| anyhow!("Missing recv_hmac_key"))?;
         let mut hmac = HmacSha256::new_from_slice(recv_hmac_key)?;
@@ -802,7 +837,11 @@ impl InboundRequest {
             ));
         }
 
-        let offline = location_nearby_connections::OfflineFrame::decode(d2d_msg.message())?;
+        Ok(OfflineFrame::decode(d2d_msg.message())?)
+    }
+
+    /// Dispatch a decrypted frame: payloads, keep-alives, disconnection.
+    async fn process_offline_frame(&mut self, offline: OfflineFrame) -> Result<(), anyhow::Error> {
         let v1_frame = offline
             .v1
             .as_ref()
@@ -900,7 +939,13 @@ impl InboundRequest {
             }
             TransferState::ReceivedPairedKeyResult => {
                 debug!("Processing State::ReceivedPairedKeyResult");
-                self.process_introduction(v1_frame).await?;
+                // Newer senders (Pixel) can send other frames before the
+                // introduction; wait for it instead of failing the transfer.
+                if v1_frame.introduction.is_some() {
+                    self.process_introduction(v1_frame).await?;
+                } else {
+                    debug!("Awaiting introduction; ignoring frame type {:?}", v1_frame.r#type());
+                }
             }
             _ => {
                 info!(

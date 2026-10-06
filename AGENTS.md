@@ -21,27 +21,32 @@ Strict clippy lints enforced - see `[lints.clippy]` in Cargo.toml. Notable: `unw
 - `src/rqs/utils.rs` - Endpoint ID, crypto helpers, mDNS name generation
 
 ### Quick Share handlers
-- `src/rqs/hdl/inbound.rs` - Inbound transfer state machine (~1640 lines)
-- `src/rqs/hdl/outbound.rs` - Outbound transfer state machine (~1456 lines)
+- `src/rqs/hdl/inbound.rs` - Inbound transfer state machine, generic over the stream (TCP, or BLE weave via `MigratableStream`)
+- `src/rqs/hdl/inbound/bwu.rs` - Wi-Fi LAN bandwidth upgrade for BLE-initiated transfers (Linux-only)
+- `src/rqs/hdl/outbound.rs` - Outbound transfer state machine
 - `src/rqs/hdl/mdns.rs` - mDNS service registration
 - `src/rqs/hdl/mdns_discovery.rs` - mDNS device discovery, `EndpointInfo` and `TransferProtocol` types
 - `src/rqs/hdl/ble.rs` - BLE listener (btleplug, cross-platform)
-- `src/rqs/hdl/blea.rs` - BLE advertiser (bluer, Linux-only)
-- `src/rqs/hdl/blea_windows.rs` - BLE advertiser (windows crate, Windows-only)
+- `src/rqs/hdl/blea.rs` - BLE sender beacon, 0xFE2C (bluer, Linux-only)
+- `src/rqs/hdl/blea_windows.rs` - BLE sender beacon (windows crate, Windows-only)
+- `src/rqs/hdl/ble_receiver.rs` - BLE receiver advertiser + GATT server, 0xFEF3 (bluer, Linux-only)
+- `src/rqs/hdl/weave.rs` - Weave packet codec for the BLE data socket
+- `src/rqs/hdl/migratable.rs` - Stream that swaps from BLE weave to TCP on bandwidth upgrade
 - `src/rqs/hdl/info.rs` - Transfer metadata and payload structs
 - `src/proto_src/*.proto` - Google Quick Share protocol buffer definitions
 - `build.rs` - prost-build for proto compilation
 
 ### LocalSend handlers
-- `src/rqs/hdl/localsend_discovery.rs` - Wraps `localsend-rs` multicast discovery, maps to `EndpointInfo`
+- `src/rqs/localsend/` - Vendored, trimmed copy of `localsend-rs` (client, server, multicast discovery, protocol types)
+- `src/rqs/hdl/localsend_discovery.rs` - Wraps the vendored multicast discovery, maps to `EndpointInfo`
 - `src/rqs/hdl/localsend_server.rs` - HTTP server bridge for receiving files, auto-accepts, polls `PendingTransfer`
 - `src/rqs/hdl/localsend_send.rs` - Outbound file sender via `LocalSendClient`
 
 ## Protocols
 
 ### Quick Share
-1. **Discovery**: mDNS (`_FC9F5ED42C8A._tcp.local.`) + BLE (UUID 0xFE2C)
-2. **Connection**: TCP + UKEY2 handshake (P256 ECDH -> AES-256 + HMAC-SHA256)
+1. **Discovery**: mDNS (`_FC9F5ED42C8A._tcp.local.`) + BLE (UUID 0xFE2C sender beacon; UUID 0xFEF3 receiver advertisement on Linux). Since Quick Share's AirDrop-compatibility update, phones can drop off Wi-Fi while the share sheet is open and then only find receivers over 0xFEF3.
+2. **Connection**: TCP + UKEY2 handshake (P256 ECDH -> AES-256 + HMAC-SHA256). BLE-discovered phones connect over GATT (weave socket), and the receiver then offers a Wi-Fi LAN bandwidth upgrade so the payload moves over TCP.
 3. **Transfer**: Encrypted chunked frames with 4-byte BE length prefix, 5MB frame limit
 4. **Completion**: Receiver ACKs payloads, sender requests safe-to-disconnect, receiver initiates disconnect
 
@@ -49,7 +54,7 @@ Strict clippy lints enforced - see `[lints.clippy]` in Cargo.toml. Notable: `unw
 1. **Discovery**: UDP multicast (224.0.0.167:53317)
 2. **Connection**: HTTP REST API on port 53317
 3. **Transfer**: `prepare-upload` -> `upload` per file (streaming, 8KB buffer)
-4. Uses `localsend-rs` crate (v0.1, default-features = false)
+4. Uses an in-tree copy of `localsend-rs` in `src/rqs/localsend/`
 
 Both protocols auto-accept all incoming transfers. Files saved to `~/Downloads`.
 

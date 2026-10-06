@@ -179,6 +179,9 @@ impl RQS {
         let ctk = ctoken.clone();
         tracker.spawn(async move { mdns.run(ctk).await });
 
+        #[cfg(target_os = "linux")]
+        self.spawn_ble_receiver(&tracker, &ctoken, endpoint_id);
+
         // Start LocalSend HTTP server for receiving files
         let device_name = self.get_device_name();
         let save_dir = utils::get_download_dir();
@@ -208,6 +211,44 @@ impl RQS {
         tracker.close();
 
         Ok((send_channel.0, ls_send_channel.0, self.ble_sender.subscribe(), localsend_ok))
+    }
+
+    /// Make us discoverable as a Quick Share receiver over BLE (0xFEF3), for
+    /// phones that leave Wi-Fi while their share sheet is open. Both tasks
+    /// share one advertisement, carrying the same endpoint id as mDNS.
+    #[cfg(target_os = "linux")]
+    fn spawn_ble_receiver(&self, tracker: &TaskTracker, ctoken: &CancellationToken, endpoint_id: [u8; 4]) {
+        let advert = hdl::receiver_service_data(
+            endpoint_id,
+            utils::DeviceType::Laptop as u8,
+            &self.get_device_name(),
+        );
+
+        let gatt_advert = advert.clone();
+        let sender = self.message_sender.clone();
+        let ctk = ctoken.clone();
+        tracker.spawn(async move {
+            match hdl::ReceiverGattServer::new(gatt_advert, sender).await {
+                Ok(srv) => {
+                    if let Err(e) = srv.run(ctk).await {
+                        error!("ReceiverGattServer: {e}");
+                    }
+                }
+                Err(e) => warn!("Couldn't init ReceiverGattServer: {e}"),
+            }
+        });
+
+        let ctk = ctoken.clone();
+        tracker.spawn(async move {
+            match hdl::ReceiverAdvertiser::new(advert).await {
+                Ok(adv) => {
+                    if let Err(e) = adv.run(ctk).await {
+                        error!("ReceiverAdvertiser: {e}");
+                    }
+                }
+                Err(e) => warn!("Couldn't init ReceiverAdvertiser: {e}"),
+            }
+        });
     }
 
     pub fn discovery(

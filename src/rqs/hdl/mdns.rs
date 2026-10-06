@@ -22,7 +22,7 @@ fn is_virtual_interface(name: &str) -> bool {
 }
 
 /// Find all usable IPv4 addresses (excluding loopback/link-local/virtual networks)
-fn get_local_network_ips() -> Vec<Ipv4Addr> {
+pub(super) fn get_local_network_ips() -> Vec<Ipv4Addr> {
     let mut ips = Vec::new();
 
     if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
